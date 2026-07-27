@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AssemblyName>CodexUsageTray-Setup</AssemblyName>
+    <RootNamespace>CodexUsageTray.Setup</RootNamespace>
+    <Version>0.4.0</Version>
+    <Authors>Pongsathon.T</Authors>
+    <Company>Pongsathon.T</Company>
+    <Product>Codex Usage Tray Setup</Product>
+    <Description>Current-user installer for Codex Usage Tray.</Description>
+    <Copyright>Copyright © 2026 Pongsathon.T</Copyright>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/159shadows357/CodexUsageTray</RepositoryUrl>
+  </PropertyGroup>
+</Project>

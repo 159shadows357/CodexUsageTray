@@ -1,0 +1,16 @@
+{
+  "rateLimits": {
+    "limitId": "codex_spark",
+    "limitName": "GPT-5.3-Codex-Spark",
+    "primary": {
+      "usedPercent": 15,
+      "windowDurationMins": 300,
+      "resetsAt": 1784689635
+    },
+    "secondary": {
+      "usedPercent": 40,
+      "windowDurationMins": 10080,
+      "resetsAt": 1784703842
+    }
+  }
+}

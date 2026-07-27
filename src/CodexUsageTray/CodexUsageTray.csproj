@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <AssemblyName>CodexUsageTray</AssemblyName>
+    <RootNamespace>CodexUsageTray</RootNamespace>
+    <Version>0.4.0</Version>
+    <Authors>Pongsathon.T</Authors>
+    <Company>Pongsathon.T</Company>
+    <Product>Codex Usage Tray</Product>
+    <Description>Windows tray utility for viewing local Codex usage.</Description>
+    <Copyright>Copyright © 2026 Pongsathon.T</Copyright>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/159shadows357/CodexUsageTray</RepositoryUrl>
+  </PropertyGroup>
+</Project>

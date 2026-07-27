@@ -1,0 +1,112 @@
+using System.Text.Json.Serialization;
+
+namespace CodexUsageTray;
+
+public enum ConnectionStatus
+{
+    Loading,
+    Connected,
+    DataStale,
+    NotSignedIn,
+    CliNotFound,
+    AppServerUnavailable,
+    RateLimitReached
+}
+
+public enum PopupStyle
+{
+    Classic,
+    MacOS,
+    Paper
+}
+
+public enum UpdateMode
+{
+    Off,
+    NotifyOnly,
+    Automatic
+}
+
+public sealed record RateLimitBucket(
+    string Key,
+    string Name,
+    string? LimitId,
+    string Slot,
+    int UsedPercent,
+    int RemainingPercent,
+    long? WindowDurationMins,
+    long? ResetsAtUnix,
+    DateTimeOffset? ResetsAtLocal,
+    string? RateLimitReachedType);
+
+public sealed record TokenActivity(
+    long? TodayOrLatestTokens,
+    string? TodayOrLatestDate,
+    long? LifetimeTokens,
+    long? PeakDailyTokens,
+    bool IsAvailable);
+
+public sealed record DailyUsageEstimate(
+    DateOnly Date,
+    long TotalTokens,
+    long PricedTokens,
+    long UnpricedTokens,
+    decimal EstimatedUsd);
+
+public sealed record ProjectUsageEstimate(
+    string Name,
+    long TotalTokens,
+    decimal EstimatedUsd,
+    long UnpricedTokens)
+{
+    public List<DailyUsageEstimate> DailyUsage { get; init; } = [];
+}
+
+public sealed record ApiEquivalentEstimate
+{
+    public bool IsAvailable { get; init; }
+    public long TotalTokens { get; init; }
+    public long PricedTokens { get; init; }
+    public long UnpricedTokens { get; init; }
+    public decimal EstimatedUsd { get; init; }
+    public int ProjectCount { get; init; }
+    public List<ProjectUsageEstimate> Projects { get; init; } = [];
+    public List<DailyUsageEstimate> DailyUsage { get; init; } = [];
+    public long UndatedTokens { get; init; }
+    public bool UsesProxyPricing { get; init; }
+    public string PricingReferenceDate { get; init; } = ApiCostEstimator.PricingReferenceDate;
+}
+
+public sealed record UsageSnapshot
+{
+    public DateTimeOffset UpdatedAt { get; init; } = DateTimeOffset.Now;
+    public bool IsLive { get; init; }
+    public string? PlanType { get; init; }
+    public List<RateLimitBucket> Buckets { get; init; } = [];
+    public int? ResetCreditsAvailable { get; init; }
+    public TokenActivity TokenActivity { get; init; } = new(null, null, null, null, false);
+    public ApiEquivalentEstimate ApiEquivalent { get; init; } = new();
+    [JsonConverter(typeof(JsonStringEnumConverter<ConnectionStatus>))]
+    public ConnectionStatus Status { get; init; } = ConnectionStatus.Loading;
+    public string? Error { get; init; }
+
+    [JsonIgnore]
+    public RateLimitBucket? MostConstrained => Buckets.OrderBy(bucket => bucket.RemainingPercent).FirstOrDefault();
+}
+
+public sealed record AppSettings
+{
+    public int RefreshIntervalMinutes { get; init; } = 2;
+    public int StaleAfterMinutes { get; init; } = 10;
+    public TrayIconStyle TrayIconStyle { get; init; } = TrayIconStyle.Ring;
+    public PopupStyle PopupStyle { get; init; } = PopupStyle.Classic;
+    public UpdateMode UpdateMode { get; init; } = UpdateMode.Off;
+}
+
+public sealed class JsonRpcException(int code, string message) : Exception(message)
+{
+    public int Code { get; } = code;
+    public bool IsMethodUnavailable => Code == -32601 || Message.Contains("experimentalApi", StringComparison.OrdinalIgnoreCase);
+}
+
+public sealed class CodexCliNotFoundException(string message) : Exception(message);

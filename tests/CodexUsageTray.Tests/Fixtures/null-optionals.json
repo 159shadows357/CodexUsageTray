@@ -1,0 +1,22 @@
+{
+  "rateLimits": {
+    "limitId": null,
+    "limitName": null,
+    "planType": null,
+    "primary": {
+      "usedPercent": -20,
+      "windowDurationMins": null,
+      "resetsAt": null
+    },
+    "secondary": {
+      "usedPercent": 140,
+      "windowDurationMins": 60,
+      "resetsAt": 999999999999999
+    }
+  },
+  "rateLimitsByLimitId": null,
+  "rateLimitResetCredits": {
+    "availableCount": 0,
+    "credits": []
+  }
+}

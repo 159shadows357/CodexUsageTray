@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="src/CodexUsageTray/CodexUsageTray.csproj" />
+  <Project Path="src/CodexUsageTray.Setup/CodexUsageTray.Setup.csproj" />
+  <Project Path="tests/CodexUsageTray.Tests/CodexUsageTray.Tests.csproj" />
+</Solution>

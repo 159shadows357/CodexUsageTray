@@ -1,0 +1,29 @@
+{
+  "rateLimitResetCredits": {
+    "availableCount": 4,
+    "credits": null
+  },
+  "rateLimits": {
+    "limitId": "legacy",
+    "limitName": null,
+    "primary": {
+      "usedPercent": 90,
+      "windowDurationMins": 300,
+      "resetsAt": 1784703842
+    },
+    "secondary": null
+  },
+  "rateLimitsByLimitId": {
+    "codex": {
+      "limitId": "codex",
+      "limitName": null,
+      "planType": "prolite",
+      "primary": {
+        "usedPercent": 0,
+        "windowDurationMins": 10080,
+        "resetsAt": 1784703842
+      },
+      "secondary": null
+    }
+  }
+}

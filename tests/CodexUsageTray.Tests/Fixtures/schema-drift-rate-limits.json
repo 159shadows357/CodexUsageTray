@@ -1,0 +1,10 @@
+{
+  "limits": [
+    {
+      "name": "Weekly",
+      "usagePercent": 42,
+      "resetAt": 1784703842
+    }
+  ],
+  "resetCredits": 4
+}

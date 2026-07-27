@@ -1,0 +1,12 @@
+{
+  "totals": {
+    "lifetime": 123456,
+    "peakDaily": 7890
+  },
+  "days": [
+    {
+      "date": "2026-07-23",
+      "tokenCount": 1000
+    }
+  ]
+}
