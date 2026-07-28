@@ -13,6 +13,7 @@ public sealed class AppPaths
         Cache = Path.Combine(Root, "usage-cache.json");
         LocalUsageIndex = Path.Combine(Root, "local-usage-index.json");
         NotificationState = Path.Combine(Root, "notification-state.json");
+        ResetCreditAutomationState = Path.Combine(Root, "reset-credit-automation-state.json");
         Updates = Path.Combine(Root, "updates");
         Directory.CreateDirectory(Root);
         Directory.CreateDirectory(Logs);
@@ -25,6 +26,7 @@ public sealed class AppPaths
     public string Cache { get; }
     public string LocalUsageIndex { get; }
     public string NotificationState { get; }
+    public string ResetCreditAutomationState { get; }
     public string Updates { get; }
 }
 

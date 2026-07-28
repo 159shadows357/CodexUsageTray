@@ -1,180 +1,158 @@
 # Codex Usage Tray
 
-Windows 11 system tray application สำหรับอ่าน Codex usage จาก local `codex app-server` ผ่าน stdio JSONL
+Windows 11 system tray application that reads Codex usage from the local `codex app-server` over stdio JSONL.
 
-Created by **Pongsathon.T** · [MIT License](LICENSE)
+Created by **Pongsathon.T** · [MIT License](LICENSE) · [ภาษาไทย](README_TH.md)
 
-โปรเจกต์ส่วนบุคคลนี้ไม่ใช่ผลิตภัณฑ์ทางการและไม่มีความเกี่ยวข้องกับ OpenAI
+This personal project is unofficial and is not affiliated with OpenAI.
 
-## ความสามารถ
+## Features
 
-- รันแบบ `WinExe` ไม่มี console window
-- เลือก tray icon ได้ระหว่าง `Ring`, `Solid bar`, `Segmented bar` และ `Number only`
-- เลือก usage popup ได้ระหว่าง `Classic`, `macOS style` และ `Paper style`
-- เมนูคลิกขวาใช้ dark style ให้ใกล้เคียง Windows 11
-- popup แสดงทุก rate-limit bucket ที่ server ส่งมา
-- รองรับ Weekly-only, `rateLimitsByLimitId`, fallback `rateLimits`, `primary` และ `secondary`
-- แสดง reset credits และ token activity เมื่อ endpoint รองรับ
-- แสดง token รวมและค่าใช้จ่ายเทียบ Standard API โดยประมาณ พร้อมโปรเจกต์ที่ใช้สูงสุดจาก local Codex history
-- มี `Usage details` สำหรับดู 7 วัน, 30 วัน, all time, daily chart และทุกโปรเจกต์
-- ใช้ persistent incremental index เพื่ออ่านซ้ำเฉพาะ session file ที่เปลี่ยน
-- adaptive refresh ทุก 1, 2 หรือ 5 นาทีตามการเปลี่ยนแปลง, หน้าต่างที่เปิดอยู่และสถานะไฟ พร้อม manual/notification/resume refresh
-- ตรวจ public GitHub Releases ได้แบบ manual, notify หรือ automatic install โดยไม่ต้องใช้ GitHub token
-- ตรวจ GitHub asset SHA-256, ป้องกัน ZIP path traversal และตรวจ `SHA256SUMS.txt` ก่อนเปิด Setup
-- ตรวจ response shape ของ rate limits และ token usage เพื่อบันทึก schema drift แบบ sanitized
-- cache เก่ากว่า 10 นาทีแสดง `Data stale`
-- single instance และปิด child `codex app-server` ตอนออก
-- Start with Windows ผ่าน `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
+- Runs as a `WinExe` without a console window.
+- Tray icon styles: `Ring`, `Solid bar`, `Segmented bar`, and `Number only`.
+- Usage popup styles: `Classic`, `macOS style`, and `Paper style`.
+- Dark Windows 11-style right-click menu.
+- Displays every rate-limit bucket returned by the server.
+- Supports Weekly-only accounts, `rateLimitsByLimitId`, fallback `rateLimits`, `primary`, and `secondary`.
+- Displays reset-credit counts, exact local expiry times, and token activity when the installed Codex version provides them.
+- Provides opt-in reset-credit expiry notification or automatic use during the final 6 hours.
+- Displays local token totals and an estimated Standard API-equivalent cost by project.
+- Provides `Usage details` for the last 7 days, last 30 days, all time, daily activity, and every local project.
+- Uses an incremental local index so unchanged Codex session files are not parsed again.
+- Refreshes adaptively every 1, 2, or 5 minutes, with manual, notification, and resume refresh.
+- Checks public GitHub Releases manually, in notify-only mode, or with opt-in automatic installation.
+- Verifies the GitHub asset SHA-256, ZIP paths, size limits, and internal `SHA256SUMS.txt`.
+- Shows `Data stale` when cached usage is older than 10 minutes.
+- Uses a single instance and closes its child `codex app-server` process on exit.
+- Supports Start with Windows through `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`.
 
 ## Requirements
 
 - Windows 11 x64
-- .NET 10 SDK สำหรับ build
-- Codex Desktop หรือ Codex CLI ที่ login แล้ว
+- Codex Desktop or Codex CLI, signed in
+- .NET 10 SDK only when building from source
 
-ตัว publish เป็น self-contained จึงไม่ต้องติดตั้ง .NET runtime บนเครื่องปลายทาง
+The published package is self-contained. Target machines do not need a separate .NET runtime or Administrator permission.
 
-## Build และ test
+## Install
 
-```powershell
-pwsh -File .\scripts\build.ps1
-pwsh -File .\scripts\test.ps1
-```
-
-test project ใช้ package-free runner และไม่เพิ่ม NuGet test framework ผลล่าสุดคือ 61 tests ผ่านทั้งหมด
-
-## Run จาก source
+Download the latest `CodexUsageTray-X.Y.Z-win-x64.zip` from [GitHub Releases](https://github.com/159shadows357/CodexUsageTray/releases), extract every file, and run:
 
 ```powershell
-dotnet run --project .\src\CodexUsageTray\CodexUsageTray.csproj -c Release
+.\CodexUsageTray-Setup.exe
 ```
 
-โปรแกรมไม่มี console window ให้เปิด popup หรือออกจากโปรแกรมผ่าน tray icon
-
-## Publish
-
-```powershell
-pwsh -File .\scripts\publish.ps1 -Version 0.4.0
-```
-
-ผลลัพธ์:
-
-```text
-artifacts\publish\win-x64\CodexUsageTray.exe
-```
-
-script ใช้ official Microsoft `dotnet-public` feed สำหรับ .NET runtime pack เพราะ `api.nuget.org` ถูก reset จากเครือข่ายที่ใช้ build ครั้งนี้ สามารถ override ได้ด้วย `-RuntimePackSource`
-
-`-Version` ถูกส่งเข้า app publish, Setup และชื่อ package จาก `package-release.ps1` เพื่อไม่ให้ EXE กับ ZIP รายงานคนละ version
-
-## Install และ uninstall
-
-ติดตั้งเฉพาะ current user และเปิดพร้อม Windows:
-
-```powershell
-pwsh -File .\scripts\install.ps1 -StartWithWindows
-```
-
-ติดตั้งโดยไม่เปิดโปรแกรมทันที:
-
-```powershell
-pwsh -File .\scripts\install.ps1 -NoLaunch
-```
-
-ตำแหน่งติดตั้ง:
+Setup installs the application under:
 
 ```text
 %LOCALAPPDATA%\Programs\CodexUsageTray
 ```
 
-ถอนการติดตั้ง:
+It enables Start with Windows and launches the tray app by default.
+
+Install without startup:
 
 ```powershell
-pwsh -File .\scripts\uninstall.ps1
+.\CodexUsageTray-Setup.exe --no-startup
 ```
 
-uninstall จะเก็บ settings, cache และ logs ใต้ `%LOCALAPPDATA%\CodexUsageTray` ไว้
-
-## สร้าง ZIP สำหรับติดตั้งเครื่องอื่น
-
-```powershell
-pwsh -File .\scripts\package-release.ps1 -Version 0.4.0
-```
-
-script จะ publish application ล่าสุดก่อนสร้าง Setup และ ZIP ใช้ `-SkipAppPublish` ได้เมื่อยืนยันแล้วว่า `artifacts\publish\win-x64` เป็น build ที่ต้องการ
-
-ผลลัพธ์:
-
-```text
-artifacts\release\CodexUsageTray-0.4.0-win-x64.zip
-```
-
-ภายใน ZIP มี `CodexUsageTray-Setup.exe`, application payload, `README.txt`, `LICENSE.txt` และ `SHA256SUMS.txt` ผู้ใช้ต้อง extract ทุกไฟล์แล้วดับเบิลคลิก Setup ตัว installer ใช้สิทธิ์ current user, เปิด Start with Windows เป็นค่า default และไม่ต้องติดตั้ง .NET เพิ่ม
-
-สำหรับเครื่องอื่น ให้ดาวน์โหลด ZIP ล่าสุดจาก [GitHub Releases](https://github.com/159shadows357/CodexUsageTray/releases)
-
-ไฟล์ `CodexUsageTray-0.1.0-win-x64.zip` และ `CodexUsageTray-0.2.0-win-x64.zip` เป็น package รุ่นเก่า ไม่ต้องเขียนทับ ให้แจก ZIP ตาม version ล่าสุด
-
-ถอนการติดตั้งจาก package เดิม:
+Uninstall:
 
 ```powershell
 .\CodexUsageTray-Setup.exe --uninstall
 ```
 
-### Authenticode
+Uninstall preserves settings, cache, and logs under `%LOCALAPPDATA%\CodexUsageTray`.
 
-EXE และ Setup มี publisher metadata เป็น `Pongsathon.T` แต่ release จะมีลายเซ็น Authenticode เมื่อส่ง certificate thumbprint ที่มี private key เท่านั้น:
+## Build and test
+
+```powershell
+pwsh -File .\scripts\build.ps1
+pwsh -File .\scripts\test.ps1
+dotnet format .\CodexUsageTray.slnx --verify-no-changes --no-restore
+```
+
+The test project uses a package-free runner. The current suite contains 68 tests.
+
+Run from source:
+
+```powershell
+dotnet run --project .\src\CodexUsageTray\CodexUsageTray.csproj -c Release
+```
+
+Publish the application:
+
+```powershell
+pwsh -File .\scripts\publish.ps1 -Version 0.5.0
+```
+
+Create the installer ZIP:
+
+```powershell
+pwsh -File .\scripts\package-release.ps1 -Version 0.5.0
+```
+
+Output:
+
+```text
+artifacts\publish\win-x64\CodexUsageTray.exe
+artifacts\release\CodexUsageTray-0.5.0-win-x64.zip
+artifacts\release\CodexUsageTray-0.5.0-win-x64.zip.sha256
+```
+
+The ZIP contains `CodexUsageTray-Setup.exe`, `CodexUsageTray.exe`, `README.txt`, `LICENSE.txt`, and `SHA256SUMS.txt`.
+
+## Authenticode
+
+The EXE and Setup metadata identifies the publisher as `Pongsathon.T`. A public release is Authenticode-signed only when a valid code-signing certificate with an accessible private key is supplied:
 
 ```powershell
 $thumbprint = Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert |
   Where-Object HasPrivateKey |
   Select-Object -First 1 -ExpandProperty Thumbprint
 pwsh -File .\scripts\package-release.ps1 `
-  -Version 0.4.0 `
+  -Version 0.5.0 `
   -CodeSigningThumbprint $thumbprint
 ```
 
-ห้ามใช้ self-signed certificate สำหรับ public release เพราะเครื่องปลายทางไม่ได้ trust certificate นั้นและไม่ได้แก้ปัญหา SmartScreen
+Do not use a self-signed certificate for a public release. Target machines will not trust it and Windows SmartScreen can still warn.
 
-## Start with Windows
+## Tray icon styles
 
-เปิดหรือปิดจาก context menu ของ tray icon หรือใช้ script:
+Open `Tray icon style` from the right-click menu:
 
-```powershell
-pwsh -File .\scripts\start-with-windows.ps1 -Enable
-pwsh -File .\scripts\start-with-windows.ps1 -Disable
-```
+- `Ring`: default quota ring without a number.
+- `Solid bar`: continuous fill gauge.
+- `Segmented bar`: four-segment gauge.
+- `Number only`: remaining percentage without the `%` character, label, frame, or card.
 
-ไม่ต้องใช้ Administrator
+The exact percentage and reset time remain available in the tooltip.
 
-## Tray icon style
+## Popup styles
 
-คลิกขวาที่ tray icon แล้วเลือก `Tray icon style`:
+Open `Popup style` from the right-click menu:
 
-- `Ring`: ค่า default เป็นวงแสดงสัดส่วนโดยไม่มีตัวเลข
-- `Solid bar`: แถบเติมต่อเนื่อง
-- `Segmented bar`: แถบแบ่งสี่ช่วง
-- `Number only`: แสดงเฉพาะตัวเลขเปอร์เซ็นต์คงเหลือโดยไม่ใส่เครื่องหมาย `%` ใช้ `Segoe UI` บนพื้นโปร่งใส ไม่มี label, กรอบ หรือ card
+- `Classic`: compact dark layout.
+- `macOS style`: blue dark background, rounded cards, progress bars, account, and token activity.
+- `Paper style`: light paper background, offset shadow, monospace values, and dark progress bars.
 
-โปรแกรมเปลี่ยน icon ทันทีและเก็บค่าที่เลือกใน `settings.json` ทั้งสองแบบ bar ไม่มีขั้วหรือกรอบรูป battery ตัวเลขเปอร์เซ็นต์ที่แน่นอนอยู่ใน tooltip
+The popup displays only the buckets and optional data returned by the server. It does not invent a 5-hour bucket or reset-credit details.
 
-## Popup style
+## Reset credits
 
-คลิกขวาที่ tray icon แล้วเลือก `Popup style`:
+Open `Reset credits` from the right-click menu:
 
-- `Classic`: รูปแบบเดิมขนาดกะทัดรัด
-- `macOS style`: พื้นหลังน้ำเงินเข้ม, rounded cards, progress bar, Account และ Token activity ตามภาพอ้างอิง
-- `Paper style`: พื้นกระดาษสีอ่อน, กรอบเหลี่ยมพร้อม offset shadow, ตัวเลข monospace และ progress bar สีเข้ม
+- `Off`: no notification or automatic use. This is the default.
+- `Notify before expiry`: show one notification when the earliest available credit enters its final 6 hours.
+- `Use before expiry`: attempt to use the earliest available credit during its final 6 hours.
 
-ค่าที่เลือกเขียนลง `settings.json` และใช้ทันทีโดยไม่ restart ทั้ง `macOS style` และ `Paper style` ปรับความสูงตามจำนวน bucket ภายใน `Screen.WorkingArea` และแสดงเฉพาะข้อมูลที่ app-server ส่งมาจริง `Paper style` จะแสดงจำนวน reset credits แต่ไม่สร้าง expiry รายรายการเมื่อ server ไม่ส่งข้อมูลนั้น
+`Use before expiry` requires an explicit confirmation. If there is nothing eligible to reset at the 6-hour attempt, the app tries again at 1 hour, 15 minutes, and 5 minutes before expiry. A transport failure retries with the same idempotency key. A completed `nothingToReset` attempt uses a new key at the next time stage.
+
+The app acts only on live server detail rows with status `available`, type `codexRateLimits`, a credit ID, and a future expiry timestamp. It never uses cached data for this action. The saved automation state contains a SHA-256 credit key and idempotency UUID, not the raw credit ID. Resume triggers an immediate refresh.
 
 ## API-equivalent estimate
 
-popup ทั้งสามรูปแบบแสดงยอด token จาก local Codex history และค่าใช้จ่ายสมมติหากคิดตาม Standard API ไม่ใช่ยอดเรียกเก็บจริงของ ChatGPT/Codex plan โปรแกรมจัดกลุ่มตาม Git root จาก `cwd` และแสดง 3 โปรเจกต์ที่มีค่าใช้จ่ายสูงสุดใน popup
-
-ราคาอ้างอิงมีวันที่กำกับในหน้าจอ `gpt-5.3-codex-spark` ยังไม่มีราคาสาธารณะ จึงใช้ราคา `gpt-5.3-codex` เป็น proxy ส่วน token ที่ไม่มี model จะอยู่ใน `unpriced` และไม่ถูกบวกเพิ่ม
-
-สูตรที่ใช้:
+`API Equivalent` is an estimate of what local Codex session tokens might cost at Standard API rates. It is not a ChatGPT or Codex plan charge.
 
 ```text
 uncached input = input - cached input - cache-write input
@@ -186,61 +164,48 @@ estimated USD =
   + output × output rate
 ```
 
-โปรแกรมอ่าน `%USERPROFILE%\.codex\sessions\**\*.jsonl` แบบ read-only เฉพาะ `cwd`, `model`, timestamp และ token counters ไม่อ่าน prompt/response หรือ `auth.json`
+`gpt-5.3-codex-spark` uses the published `gpt-5.3-codex` rate as a proxy while Spark has no separate public price. Unknown models stay `unpriced` and are not added to the estimate.
 
-คลิกขวาที่ tray icon แล้วเลือก `Usage details` เพื่อเปิดหน้าต่างแยก:
+The application reads `%USERPROFILE%\.codex\sessions\**\*.jsonl` in read-only mode and uses only `cwd`, model, timestamp, and token counters. It does not read prompts, responses, or `auth.json`.
 
-- `Last 7 days`
-- `Last 30 days`
-- `All time`
-- daily estimated API cost chart
-- ตารางทุกโปรเจกต์พร้อม token, estimated USD และ unpriced token
+## Refresh behavior
 
-ช่วง 7/30 วันใช้ timestamp จริงจาก session record เท่านั้น record ที่ไม่มี timestamp จะรวมใน `All time` และมีหมายเหตุว่าไม่ถูกนับในช่วงวันที่ หน้าต่างนี้แยกจาก popup เพื่อไม่เพิ่ม scrollbar ให้ popup เดิม
+- Usage changed or popup/details visible: 1 minute.
+- Normal state: the configured base interval, default 2 minutes.
+- Three unchanged refreshes or battery power: at least 5 minutes.
+- App-server notification, manual refresh, and resume: immediate refresh.
+- Connection failures: backoff of 2, 5, 10, 30, and 60 seconds.
 
-## Adaptive refresh
+## Public updates
 
-- เมื่อข้อมูลเปลี่ยนหรือเปิด popup/details อยู่: 1 นาที
-- สถานะปกติ: ใช้ค่า base interval ใน `settings.json` ซึ่ง default คือ 2 นาที
-- ข้อมูลไม่เปลี่ยน 3 รอบหรือเครื่องใช้แบตเตอรี่: อย่างน้อย 5 นาที
-- app-server notification, manual refresh และ resume จะ refresh ทันที
-- error retry ยังใช้ backoff 2, 5, 10, 30 และ 60 วินาที
+Open `Updates` from the right-click menu:
 
-## Public GitHub updates
+- `Check now`: check the latest public release immediately.
+- `Off`: disable background checks; this is the default.
+- `Notify only`: check 30 seconds after startup and every 24 hours.
+- `Install automatically`: download, verify, and start Setup without another prompt.
 
-source และ release อยู่ที่ public repository [`159shadows357/CodexUsageTray`](https://github.com/159shadows357/CodexUsageTray) โปรแกรมที่ติดตั้งแล้วไม่มี `.git` จึงตรวจ version จาก GitHub Releases API ไม่ใช้ `git pull`
+Update and download requests do not send an `Authorization` header. Target machines do not need a GitHub token.
 
-ตั้งค่าจาก `right-click tray > Updates`:
+Before installation, the updater verifies:
 
-- `Check now`: ตรวจ release ล่าสุดทันที
-- `Off`: ไม่ตรวจ update อัตโนมัติ และเป็นค่า default
-- `Notify only`: ตรวจหลังเปิดโปรแกรม 30 วินาที จากนั้นทุก 24 ชั่วโมง และแจ้งเมื่อมีรุ่นใหม่
-- `Install automatically`: ดาวน์โหลด ตรวจสอบ และเรียก Setup โดยไม่ถามซ้ำ
+1. Exact asset name `CodexUsageTray-X.Y.Z-win-x64.zip`.
+2. GitHub `asset.digest` SHA-256.
+3. Download and extracted size limits.
+4. Normalized ZIP paths to prevent path traversal.
+5. `CodexUsageTray-Setup.exe` and `CodexUsageTray.exe` against `SHA256SUMS.txt`.
 
-request ตรวจ update และดาวน์โหลด release ไม่ส่ง `Authorization` header เครื่องปลายทางจึงไม่ต้องสร้างหรือเก็บ GitHub token หากเคยใช้รุ่น `0.3.0` สามารถลบ credential target `CodexUsageTray/GitHub/159shadows357/CodexUsageTray` จาก Windows Credential Manager ได้
+Automatic installation is opt-in while public executables are not Authenticode-signed.
 
-ก่อนติดตั้ง โปรแกรมตรวจ:
+## Codex CLI troubleshooting
 
-1. ชื่อ asset ต้องตรง `CodexUsageTray-X.Y.Z-win-x64.zip`
-2. `asset.digest` ต้องเป็น SHA-256 และตรงกับไฟล์ที่ดาวน์โหลด
-3. ZIP ต้องไม่มี path traversal และมีขนาดไม่เกิน limit
-4. `CodexUsageTray-Setup.exe` กับ `CodexUsageTray.exe` ต้องตรง `SHA256SUMS.txt`
-
-auto-install เป็น opt-in เพราะ executable ยังไม่มี Authenticode signature Setup เดิมจะรักษาสถานะ Start with Windows, ปิด instance เก่า, แทน executable, ตรวจ hash หลัง copy และเปิดรุ่นใหม่
-
-## Support the project
-
-หากโปรแกรมนี้ช่วยงานของคุณ สามารถสนับสนุนค่าใช้จ่ายในการพัฒนาและทดสอบได้ที่ [Ko-fi.com/PongsathonTan](https://ko-fi.com/PongsathonTan)
-
-เมนู `Buy me a coffee...` ใน Widget จะเปิด Ko-fi โดยตรง
-
-## ตรวจ login
+Check the login:
 
 ```powershell
 codex login status
 ```
 
-หาก `codex` ใน PATH ชี้ไป packaged executable ใต้ `C:\Program Files\WindowsApps` และได้ `Access is denied` ให้ใช้ per-user executable ที่ Codex Desktop สร้างไว้:
+If the PATH entry under `C:\Program Files\WindowsApps` returns `Access is denied`, locate the per-user executable created by Codex Desktop:
 
 ```powershell
 $codex = Get-ChildItem "$env:LOCALAPPDATA\OpenAI\Codex\bin\*\codex.exe" -File |
@@ -249,42 +214,31 @@ $codex = Get-ChildItem "$env:LOCALAPPDATA\OpenAI\Codex\bin\*\codex.exe" -File |
 & $codex login status
 ```
 
-application resolver ตรวจตามลำดับนี้:
+The application checks `CODEX_CLI_PATH`, Codex configuration, the per-user Codex Desktop binary, usable PATH entries, and then VS Code extension binaries.
 
-1. environment variable `CODEX_CLI_PATH`
-2. `CODEX_CLI_PATH` ใน `%USERPROFILE%\.codex\config.toml`
-3. `%LOCALAPPDATA%\OpenAI\Codex\bin\*\codex.exe`
-4. PATH โดยข้าม WindowsApps ที่รันไม่ได้
-5. Codex binary จาก VS Code extension
+## Runtime data and privacy
 
-รองรับ `.exe`, `.cmd` และ `.bat`
-
-## Logs และ runtime data
-
-เปิด logs จาก context menu หรือไปที่:
-
-```text
-%LOCALAPPDATA%\CodexUsageTray\logs
-```
-
-ไฟล์ runtime:
+Runtime files are stored under `%LOCALAPPDATA%\CodexUsageTray`:
 
 ```text
 settings.json
 usage-cache.json
 local-usage-index.json
 notification-state.json
+reset-credit-automation-state.json
 updates\
 logs\codex-usage-tray-yyyyMMdd.log
 ```
 
-`local-usage-index.json` เก็บ SHA-256 ของ session/project path, file size, modified time และยอด token/cost รายวันเท่านั้น ไม่เก็บ full path, prompt หรือ response content
+`local-usage-index.json` stores hashed session/project keys and aggregate counters. It does not store full paths, prompts, or responses.
 
-เก็บ log ไม่เกิน 7 วัน โปรแกรมไม่อ่าน `auth.json` และ diagnostics ไม่มี email, access token, refresh token, GitHub token, API key, authorization header, credential หรือ raw authentication response
+Logs are retained for up to 7 days. Diagnostics exclude email, access tokens, refresh tokens, GitHub tokens, API keys, authorization headers, credentials, raw authentication responses, and environment dumps.
 
-## ภาษา
+## Support the project
 
-- [English README](README_EN.md)
+If this program helps your workflow, you can support its development and testing costs at [Ko-fi.com/PongsathonTan](https://ko-fi.com/PongsathonTan).
+
+The Widget's `Buy me a coffee...` action opens Ko-fi directly.
 
 ## License
 

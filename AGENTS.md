@@ -8,7 +8,7 @@ Use the existing project structure and built-in .NET APIs. Do not add a NuGet pa
 
 ## Public repository policy
 
-- The only committed Markdown files are `AGENTS.md`, `README.md`, and `README_EN.md`.
+- The only committed Markdown files are `AGENTS.md`, `README.md`, and `README_TH.md`.
 - Keep the Thai and English README content aligned when behavior, commands, requirements, version, security, installation, update, support, or license details change.
 - Do not recreate `prompt.md`, project-state files, handoff files, design-QA Markdown, or separate Markdown documentation.
 - Put release validation evidence in the GitHub release notes or the user handoff, not a new Markdown file.
@@ -57,7 +57,7 @@ Keep the same release version in:
 - `clientInfo.version` in `src/CodexUsageTray/CodexAppServerSession.cs`
 - commands and output examples in both README files
 
-Use semantic tags such as `v0.4.0`.
+Use semantic tags such as `v0.5.0`.
 
 ## Validation
 

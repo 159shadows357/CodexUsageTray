@@ -27,6 +27,22 @@ public enum UpdateMode
     Automatic
 }
 
+public enum ResetCreditMode
+{
+    Off,
+    NotifyBeforeExpiry,
+    UseBeforeExpiry
+}
+
+public enum ResetCreditConsumeOutcome
+{
+    Reset,
+    NothingToReset,
+    NoCredit,
+    AlreadyRedeemed,
+    Unknown
+}
+
 public sealed record RateLimitBucket(
     string Key,
     string Name,
@@ -38,6 +54,21 @@ public sealed record RateLimitBucket(
     long? ResetsAtUnix,
     DateTimeOffset? ResetsAtLocal,
     string? RateLimitReachedType);
+
+public sealed record RateLimitResetCredit(
+    string Id,
+    string ResetType,
+    string Status,
+    long GrantedAtUnix,
+    DateTimeOffset? GrantedAtLocal,
+    long? ExpiresAtUnix,
+    DateTimeOffset? ExpiresAtLocal,
+    string? Title,
+    string? Description);
+
+public sealed record ResetCreditSummary(
+    long? AvailableCount,
+    IReadOnlyList<RateLimitResetCredit>? Credits);
 
 public sealed record TokenActivity(
     long? TodayOrLatestTokens,
@@ -83,7 +114,9 @@ public sealed record UsageSnapshot
     public bool IsLive { get; init; }
     public string? PlanType { get; init; }
     public List<RateLimitBucket> Buckets { get; init; } = [];
-    public int? ResetCreditsAvailable { get; init; }
+    public long? ResetCreditsAvailable { get; init; }
+    [JsonIgnore]
+    public List<RateLimitResetCredit>? ResetCredits { get; init; }
     public TokenActivity TokenActivity { get; init; } = new(null, null, null, null, false);
     public ApiEquivalentEstimate ApiEquivalent { get; init; } = new();
     [JsonConverter(typeof(JsonStringEnumConverter<ConnectionStatus>))]
@@ -101,6 +134,7 @@ public sealed record AppSettings
     public TrayIconStyle TrayIconStyle { get; init; } = TrayIconStyle.Ring;
     public PopupStyle PopupStyle { get; init; } = PopupStyle.Classic;
     public UpdateMode UpdateMode { get; init; } = UpdateMode.Off;
+    public ResetCreditMode ResetCreditMode { get; init; } = ResetCreditMode.Off;
 }
 
 public sealed class JsonRpcException(int code, string message) : Exception(message)

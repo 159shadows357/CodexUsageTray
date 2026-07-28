@@ -49,7 +49,7 @@ public sealed class CodexAppServerSession : IAsyncDisposable
             "initialize",
             new
             {
-                clientInfo = new { name = "codex_usage_tray", title = "Codex Usage Tray", version = "0.4.0" },
+                clientInfo = new { name = "codex_usage_tray", title = "Codex Usage Tray", version = "0.5.0" },
                 capabilities = new { experimentalApi = true }
             },
             RequestTimeout,
@@ -114,6 +114,7 @@ public sealed class CodexAppServerSession : IAsyncDisposable
                 .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
         }
 
+        var resetCredits = RateLimitNormalizer.NormalizeResetCredits(limits);
         var reached = buckets.Any(bucket => bucket.RemainingPercent == 0 || !string.IsNullOrWhiteSpace(bucket.RateLimitReachedType));
         return new UsageSnapshot
         {
@@ -121,9 +122,39 @@ public sealed class CodexAppServerSession : IAsyncDisposable
             IsLive = true,
             PlanType = planType,
             Buckets = buckets,
-            ResetCreditsAvailable = RateLimitNormalizer.ReadResetCredits(limits),
+            ResetCreditsAvailable = resetCredits.AvailableCount,
+            ResetCredits = resetCredits.Credits?.ToList(),
             TokenActivity = RateLimitNormalizer.NormalizeUsage(usage, DateOnly.FromDateTime(DateTime.Now)),
             Status = reached ? ConnectionStatus.RateLimitReached : ConnectionStatus.Connected
+        };
+    }
+
+    public async Task<ResetCreditConsumeOutcome> ConsumeResetCreditAsync(
+        string creditId,
+        string idempotencyKey,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(creditId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(idempotencyKey);
+        var client = _client ?? throw new InvalidOperationException("Codex app-server is not connected.");
+        var response = await client.RequestAsync(
+            "account/rateLimitResetCredit/consume",
+            new { creditId, idempotencyKey },
+            RequestTimeout,
+            cancellationToken);
+        return ParseResetCreditOutcome(response);
+    }
+
+    internal static ResetCreditConsumeOutcome ParseResetCreditOutcome(JsonElement response)
+    {
+        var outcome = ReadString(response, "outcome");
+        return outcome switch
+        {
+            "reset" => ResetCreditConsumeOutcome.Reset,
+            "nothingToReset" => ResetCreditConsumeOutcome.NothingToReset,
+            "noCredit" => ResetCreditConsumeOutcome.NoCredit,
+            "alreadyRedeemed" => ResetCreditConsumeOutcome.AlreadyRedeemed,
+            _ => ResetCreditConsumeOutcome.Unknown
         };
     }
 

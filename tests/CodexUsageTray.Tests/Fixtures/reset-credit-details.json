@@ -1,0 +1,27 @@
+{
+  "rateLimitResetCredits": {
+    "availableCount": 2,
+    "credits": [
+      {
+        "id": "credit-first",
+        "resetType": "codexRateLimits",
+        "status": "available",
+        "grantedAt": 1785000000,
+        "expiresAt": 1785528616,
+        "title": "Full reset",
+        "description": "Resets eligible Codex rate-limit windows."
+      },
+      {
+        "id": "credit-second",
+        "resetType": "codexRateLimits",
+        "status": "available",
+        "grantedAt": 1785000001,
+        "expiresAt": 1786557181,
+        "title": "Full reset",
+        "description": null
+      }
+    ]
+  },
+  "rateLimits": null,
+  "rateLimitsByLimitId": null
+}

@@ -33,9 +33,11 @@ public sealed class TrayApplicationContext : ApplicationContext
     private readonly SingleInstanceCoordinator _singleInstance;
     private readonly LocalUsageAnalyzer _localUsageAnalyzer;
     private readonly GitHubReleaseUpdater _updater;
+    private readonly ResetCreditAutomation _resetCreditAutomation;
     private readonly AdaptiveRefreshPolicy _adaptiveRefreshPolicy = new();
     private readonly Dictionary<TrayIconStyle, ToolStripMenuItem> _iconStyleItems = new();
     private readonly Dictionary<PopupStyle, ToolStripMenuItem> _popupStyleItems = new();
+    private readonly Dictionary<ResetCreditMode, ToolStripMenuItem> _resetCreditModeItems = new();
     private readonly Dictionary<UpdateMode, ToolStripMenuItem> _updateModeItems = new();
     private CodexAppServerSession? _session;
     private UsageSnapshot _snapshot;
@@ -55,6 +57,7 @@ public sealed class TrayApplicationContext : ApplicationContext
     private TimeSpan? _lastRefreshDelay;
     private Version? _lastNotifiedUpdateVersion;
     private bool _updateFeedWarningShown;
+    private bool _resetCreditMethodWarningShown;
 
     public TrayApplicationContext(
         SingleInstanceCoordinator singleInstance,
@@ -74,6 +77,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         _notificationTracker = new NotificationTracker(paths.NotificationState);
         _localUsageAnalyzer = new LocalUsageAnalyzer(paths.LocalUsageIndex, store);
         _updater = new GitHubReleaseUpdater(paths.Updates);
+        _resetCreditAutomation = new ResetCreditAutomation(paths.ResetCreditAutomationState, store);
         if (!File.Exists(paths.Settings))
         {
             store.Write(paths.Settings, _settings);
@@ -122,6 +126,16 @@ public sealed class TrayApplicationContext : ApplicationContext
         }
         UpdatePopupStyleChecks();
         menu.Items.Add(popupStyleMenu);
+        var resetCreditsMenu = new ToolStripMenuItem("Reset credits");
+        foreach (var mode in Enum.GetValues<ResetCreditMode>())
+        {
+            var modeItem = new ToolStripMenuItem(ResetCreditModeText(mode));
+            modeItem.Click += (_, _) => SetResetCreditMode(mode);
+            _resetCreditModeItems.Add(mode, modeItem);
+            resetCreditsMenu.DropDownItems.Add(modeItem);
+        }
+        UpdateResetCreditModeChecks();
+        menu.Items.Add(resetCreditsMenu);
         var updatesMenu = new ToolStripMenuItem("Updates");
         updatesMenu.DropDownItems.Add("Check now", null, async (_, _) => await CheckForUpdatesAsync(interactive: true));
         updatesMenu.DropDownItems.Add(new ToolStripSeparator());
@@ -180,7 +194,8 @@ public sealed class TrayApplicationContext : ApplicationContext
         }
         _logger.Info(
             $"Codex Usage Tray started. Tray icon style: {_settings.TrayIconStyle}; " +
-            $"popup style: {_settings.PopupStyle}; update mode: {_settings.UpdateMode}.");
+            $"popup style: {_settings.PopupStyle}; reset credit mode: {_settings.ResetCreditMode}; " +
+            $"update mode: {_settings.UpdateMode}.");
     }
 
     private UsageSnapshot LoadInitialSnapshot()
@@ -289,6 +304,7 @@ public sealed class TrayApplicationContext : ApplicationContext
             }
 
             var live = await _session.ReadSnapshotAsync(_shutdown.Token);
+            live = await HandleResetCreditsAsync(live);
             var apiEquivalent = _snapshot.ApiEquivalent;
             try
             {
@@ -313,6 +329,14 @@ public sealed class TrayApplicationContext : ApplicationContext
                 _popup.Visible || _details.Visible,
                 SystemInformation.PowerStatus.PowerLineStatus);
             _nextRefreshAt = DateTimeOffset.Now.Add(nextDelay);
+            var nextResetEvaluation = _resetCreditAutomation.NextEvaluationAt(
+                live.ResetCredits,
+                _settings.ResetCreditMode,
+                DateTimeOffset.Now);
+            if (nextResetEvaluation is not null && nextResetEvaluation < _nextRefreshAt)
+            {
+                _nextRefreshAt = nextResetEvaluation.Value;
+            }
             if (_lastRefreshDelay != nextDelay)
             {
                 _logger.Info($"Adaptive refresh interval: {nextDelay.TotalMinutes:0} minute(s).");
@@ -363,6 +387,128 @@ public sealed class TrayApplicationContext : ApplicationContext
         {
             _refreshGate.Release();
         }
+    }
+
+    private async Task<UsageSnapshot> HandleResetCreditsAsync(UsageSnapshot live)
+    {
+        if (!live.IsLive || live.ResetCredits is null || _settings.ResetCreditMode == ResetCreditMode.Off)
+        {
+            return live;
+        }
+
+        ResetCreditAutomationDecision decision;
+        try
+        {
+            decision = _resetCreditAutomation.Evaluate(
+                live.ResetCredits,
+                _settings.ResetCreditMode,
+                DateTimeOffset.Now);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            _logger.Error($"Reset-credit automation state could not be saved: {error.Message}");
+            return live;
+        }
+
+        if (decision.Action == ResetCreditActionKind.None || decision.Credit?.ExpiresAtLocal is null)
+        {
+            return live;
+        }
+
+        var expiry = FormatLocalTimestamp(decision.Credit.ExpiresAtLocal.Value);
+        if (decision.Action == ResetCreditActionKind.Notify)
+        {
+            _logger.Info($"Reset credit expires at {decision.Credit.ExpiresAtLocal:O}; notification shown.");
+            _trayIcon.ShowBalloonTip(
+                8000,
+                "Codex reset credit expires soon",
+                $"An available reset credit expires {expiry}.",
+                ToolTipIcon.Warning);
+            return live;
+        }
+
+        if (_session is null ||
+            string.IsNullOrWhiteSpace(decision.IdempotencyKey))
+        {
+            return live;
+        }
+
+        try
+        {
+            var outcome = await _session.ConsumeResetCreditAsync(
+                decision.Credit.Id,
+                decision.IdempotencyKey,
+                _shutdown.Token);
+            _resetCreditAutomation.RecordOutcome(decision, outcome, DateTimeOffset.Now);
+            _logger.Info($"Reset-credit automatic attempt stage={decision.Stage}; outcome={outcome}; expires={decision.Credit.ExpiresAtLocal:O}.");
+
+            if (outcome is ResetCreditConsumeOutcome.Reset or ResetCreditConsumeOutcome.AlreadyRedeemed)
+            {
+                _trayIcon.ShowBalloonTip(
+                    8000,
+                    "Codex reset credit used",
+                    outcome == ResetCreditConsumeOutcome.Reset
+                        ? $"Rate limits were reset using the credit expiring {expiry}."
+                        : "The reset request had already completed successfully.",
+                    ToolTipIcon.Info);
+                return await _session.ReadSnapshotAsync(_shutdown.Token);
+            }
+
+            if (outcome == ResetCreditConsumeOutcome.NoCredit)
+            {
+                return await _session.ReadSnapshotAsync(_shutdown.Token);
+            }
+        }
+        catch (JsonRpcException error) when (error.IsMethodUnavailable)
+        {
+            DisableResetCreditAutomationForUnavailableMethod();
+        }
+        catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception error)
+        {
+            try
+            {
+                _resetCreditAutomation.RecordTransportFailure(decision, DateTimeOffset.Now);
+            }
+            catch (Exception stateError) when (stateError is IOException or UnauthorizedAccessException)
+            {
+                _logger.Error($"Reset-credit retry state could not be saved: {stateError.Message}");
+            }
+            _logger.Error($"Reset-credit automatic attempt failed: {SecretSanitizer.Sanitize(error.Message)}");
+        }
+
+        return live;
+    }
+
+    private void DisableResetCreditAutomationForUnavailableMethod()
+    {
+        var nextSettings = _settings with { ResetCreditMode = ResetCreditMode.Off };
+        try
+        {
+            _store.Write(_paths.Settings, nextSettings);
+            _settings = nextSettings;
+            UpdateResetCreditModeChecks();
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            _logger.Error($"Could not disable unavailable reset-credit automation: {error.Message}");
+        }
+
+        if (_resetCreditMethodWarningShown)
+        {
+            return;
+        }
+
+        _resetCreditMethodWarningShown = true;
+        _logger.Info("Reset-credit consume method is unavailable; automation was disabled.");
+        _trayIcon.ShowBalloonTip(
+            8000,
+            "Reset-credit automation unavailable",
+            "This Codex version or account does not support automatic reset-credit use. The option was turned off.",
+            ToolTipIcon.Warning);
     }
 
     private void HandleRefreshFailure(ConnectionStatus fallbackStatus, Exception error)
@@ -541,6 +687,56 @@ public sealed class TrayApplicationContext : ApplicationContext
         PopupStyle.MacOS => "macOS style",
         PopupStyle.Paper => "Paper style",
         _ => style.ToString()
+    };
+
+    private void SetResetCreditMode(ResetCreditMode mode)
+    {
+        if (_settings.ResetCreditMode == mode) return;
+        if (mode == ResetCreditMode.UseBeforeExpiry)
+        {
+            var confirm = MessageBox.Show(
+                "Use before expiry can redeem an earned reset credit automatically during its final 6 hours.\n\n" +
+                "It retries only at the 1-hour, 15-minute, and 5-minute marks when there is nothing to reset. Enable it?",
+                "Automatic reset-credit use",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning);
+            if (confirm != DialogResult.Yes) return;
+        }
+
+        var nextSettings = _settings with { ResetCreditMode = mode };
+        try
+        {
+            _store.Write(_paths.Settings, nextSettings);
+            _settings = nextSettings;
+            UpdateResetCreditModeChecks();
+            _resetCreditMethodWarningShown = false;
+            RequestRefresh();
+            _logger.Info($"Reset credit mode changed to {mode}.");
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            MessageBox.Show(
+                SecretSanitizer.Sanitize(error.Message),
+                "Reset credits",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
+        }
+    }
+
+    private void UpdateResetCreditModeChecks()
+    {
+        foreach (var (mode, item) in _resetCreditModeItems)
+        {
+            item.Checked = mode == _settings.ResetCreditMode;
+        }
+    }
+
+    private static string ResetCreditModeText(ResetCreditMode mode) => mode switch
+    {
+        ResetCreditMode.Off => "Off",
+        ResetCreditMode.NotifyBeforeExpiry => "Notify before expiry",
+        ResetCreditMode.UseBeforeExpiry => "Use before expiry",
+        _ => mode.ToString()
     };
 
     private void SetUpdateMode(UpdateMode mode)
@@ -732,6 +928,10 @@ public sealed class TrayApplicationContext : ApplicationContext
             Status: {_snapshot.Status}
             Tray icon style: {_settings.TrayIconStyle}
             Popup style: {_settings.PopupStyle}
+            Reset credit mode: {_settings.ResetCreditMode}
+            Reset credits: {_snapshot.ResetCreditsAvailable?.ToString() ?? "unavailable"}
+            Reset credit details: {(_snapshot.ResetCredits is null ? "unavailable" : $"{_snapshot.ResetCredits.Count} row(s)")}
+            Next reset credit expiry: {_snapshot.ResetCredits?.Where(credit => credit.ExpiresAtLocal is not null).MinBy(credit => credit.ExpiresAtLocal)?.ExpiresAtLocal?.ToString("O") ?? "unavailable"}
             Update mode: {_settings.UpdateMode}
             Update feed: public GitHub Releases
             Plan: {_snapshot.PlanType ?? "unknown"}
@@ -758,6 +958,9 @@ public sealed class TrayApplicationContext : ApplicationContext
         "About Codex Usage Tray",
         MessageBoxButtons.OK,
         MessageBoxIcon.Information);
+
+    private static string FormatLocalTimestamp(DateTimeOffset value) =>
+        value.ToString("yyyy-MM-dd HH:mm zzz", System.Globalization.CultureInfo.InvariantCulture);
 
     private void OnAccountDataChanged(object? sender, EventArgs eventArgs) => _externalRefreshRequested = true;
     private void OnProcessExited(object? sender, EventArgs eventArgs) => _externalRefreshRequested = true;

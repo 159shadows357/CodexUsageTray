@@ -46,6 +46,14 @@ Version 0.4.0 and later checks the public GitHub Releases feed without
 a GitHub token. Open the tray menu, then Updates > Check now.
 Automatic install is optional and disabled by default.
 
+Reset credits
+-------------
+Open Reset credits from the tray menu. Off is the default.
+Notify before expiry shows one alert in the final 6 hours.
+Use before expiry is opt-in and requires confirmation. It can redeem the
+earliest expiring available reset credit at the 6-hour, 1-hour, 15-minute,
+or 5-minute stage. The app acts only on live details returned by Codex.
+
 Support
 -------
 Open Buy me a coffee from the tray menu or visit:

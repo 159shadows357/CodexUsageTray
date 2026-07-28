@@ -27,6 +27,12 @@ internal static class Program
         ("invalid reset timestamp becomes unavailable", InvalidResetTimestamp),
         ("most constrained bucket is selected", MostConstrained),
         ("reset credits use availableCount", ResetCredits),
+        ("reset-credit details preserve null and empty semantics", ResetCreditDetails),
+        ("reset-credit consume outcomes are parsed exactly", ResetCreditOutcomes),
+        ("reset-credit mode persists and legacy settings default to off", ResetCreditModeSettings),
+        ("reset-credit automation stages attempts and idempotency keys", ResetCreditAutomationStages),
+        ("reset-credit automation reuses a pending key after transport failure", ResetCreditAutomationTransportRetry),
+        ("reset-credit automation filters ineligible credits and completes redemption", ResetCreditAutomationEligibility),
         ("usage summary and latest bucket", UsageSummaryLatest),
         ("usage summary prefers local today", UsageSummaryToday),
         ("unsupported usage becomes unavailable", UsageUnavailable),
@@ -73,6 +79,7 @@ internal static class Program
         ("protocol compatibility recognizes current and legacy schemas", ProtocolCompatibilityKnown),
         ("protocol compatibility reports unknown schema without throwing", ProtocolCompatibilityDrift),
         ("tray context menu uses dark modern renderer", ModernContextMenuStyle),
+        ("usage popup styles keep scrollbars disabled", UsagePopupHasNoScrollbar),
         ("tray icon replacement does not leak GDI handles", TrayIconDoesNotLeak),
         ("tray tooltip preserves exact percentage", TrayTooltipPreservesPercentage)
     ];
@@ -198,7 +205,49 @@ internal static class Program
     private static Task ResetCredits()
     {
         using var document = ReadFixture("weekly-only.json");
-        Equal(4, RateLimitNormalizer.ReadResetCredits(document.RootElement));
+        Equal(4L, RateLimitNormalizer.ReadResetCredits(document.RootElement));
+        True(RateLimitNormalizer.NormalizeResetCredits(document.RootElement).Credits is null);
+        return Task.CompletedTask;
+    }
+
+    private static Task ResetCreditDetails()
+    {
+        using var document = ReadFixture("reset-credit-details.json");
+        var summary = RateLimitNormalizer.NormalizeResetCredits(document.RootElement);
+        Equal(2L, summary.AvailableCount);
+        Equal(2, summary.Credits!.Count);
+        Equal("credit-first", summary.Credits[0].Id);
+        Equal("codexRateLimits", summary.Credits[0].ResetType);
+        Equal("available", summary.Credits[0].Status);
+        Equal(1785528616L, summary.Credits[0].ExpiresAtLocal!.Value.ToUnixTimeSeconds());
+
+        using var empty = JsonDocument.Parse("""{"rateLimitResetCredits":{"availableCount":3000000000,"credits":[]}}""");
+        var emptySummary = RateLimitNormalizer.NormalizeResetCredits(empty.RootElement);
+        Equal(3_000_000_000L, emptySummary.AvailableCount);
+        Equal(0, emptySummary.Credits!.Count);
+
+        using var malformed = JsonDocument.Parse(
+            """{"rateLimitResetCredits":{"availableCount":1,"credits":[null,5,{},{"id":"safe","resetType":"codexRateLimits","status":"available","grantedAt":1785000000,"expiresAt":9223372036854775807}]}}""");
+        var malformedSummary = RateLimitNormalizer.NormalizeResetCredits(malformed.RootElement);
+        Equal(1, malformedSummary.Credits!.Count);
+        True(malformedSummary.Credits[0].ExpiresAtLocal is null);
+        return Task.CompletedTask;
+    }
+
+    private static Task ResetCreditOutcomes()
+    {
+        foreach (var (value, expected) in new[]
+        {
+            ("reset", ResetCreditConsumeOutcome.Reset),
+            ("nothingToReset", ResetCreditConsumeOutcome.NothingToReset),
+            ("noCredit", ResetCreditConsumeOutcome.NoCredit),
+            ("alreadyRedeemed", ResetCreditConsumeOutcome.AlreadyRedeemed),
+            ("unexpected", ResetCreditConsumeOutcome.Unknown)
+        })
+        {
+            using var response = JsonDocument.Parse($$"""{"outcome":"{{value}}"}""");
+            Equal(expected, CodexAppServerSession.ParseResetCreditOutcome(response.RootElement));
+        }
         return Task.CompletedTask;
     }
 
@@ -619,6 +668,109 @@ internal static class Program
         return Task.CompletedTask;
     }
 
+    private static Task ResetCreditModeSettings()
+    {
+        WithTempDirectory(root =>
+        {
+            var store = new JsonStore();
+            var path = Path.Combine(root, "settings.json");
+            store.Write(path, new AppSettings { ResetCreditMode = ResetCreditMode.UseBeforeExpiry });
+            Equal(ResetCreditMode.UseBeforeExpiry, store.ReadSettings(path).ResetCreditMode);
+
+            File.WriteAllText(path, "{\"refreshIntervalMinutes\":2,\"staleAfterMinutes\":10}");
+            Equal(ResetCreditMode.Off, store.ReadSettings(path).ResetCreditMode);
+        });
+        return Task.CompletedTask;
+    }
+
+    private static Task ResetCreditAutomationStages()
+    {
+        WithTempDirectory(root =>
+        {
+            var now = new DateTimeOffset(2026, 7, 28, 12, 0, 0, TimeSpan.FromHours(7));
+            var expires = now.AddHours(8);
+            var credit = ResetCredit("credit-stages", expires);
+            var statePath = Path.Combine(root, "reset-credit-state.json");
+            var automation = new ResetCreditAutomation(statePath, new JsonStore());
+
+            Equal(ResetCreditActionKind.None, automation.Evaluate([credit], ResetCreditMode.UseBeforeExpiry, now).Action);
+            Equal(expires.AddHours(-6), automation.NextEvaluationAt([credit], ResetCreditMode.UseBeforeExpiry, now));
+
+            var first = automation.Evaluate([credit], ResetCreditMode.UseBeforeExpiry, expires.AddHours(-5));
+            Equal(ResetCreditActionKind.Consume, first.Action);
+            Equal(0, first.Stage);
+            True(!string.IsNullOrWhiteSpace(first.IdempotencyKey));
+            False(File.ReadAllText(statePath).Contains("credit-stages", StringComparison.Ordinal));
+            automation.RecordOutcome(first, ResetCreditConsumeOutcome.NothingToReset, expires.AddHours(-5));
+
+            var second = automation.Evaluate([credit], ResetCreditMode.UseBeforeExpiry, expires.AddMinutes(-30));
+            Equal(1, second.Stage);
+            NotEqual(first.IdempotencyKey, second.IdempotencyKey);
+            automation.RecordOutcome(second, ResetCreditConsumeOutcome.NothingToReset, expires.AddMinutes(-30));
+
+            var third = automation.Evaluate([credit], ResetCreditMode.UseBeforeExpiry, expires.AddMinutes(-10));
+            Equal(2, third.Stage);
+            automation.RecordOutcome(third, ResetCreditConsumeOutcome.NothingToReset, expires.AddMinutes(-10));
+
+            var fourth = automation.Evaluate([credit], ResetCreditMode.UseBeforeExpiry, expires.AddMinutes(-3));
+            Equal(3, fourth.Stage);
+            automation.RecordOutcome(fourth, ResetCreditConsumeOutcome.NothingToReset, expires.AddMinutes(-3));
+            Equal(ResetCreditActionKind.None, automation.Evaluate([credit], ResetCreditMode.UseBeforeExpiry, expires.AddMinutes(-2)).Action);
+        });
+        return Task.CompletedTask;
+    }
+
+    private static Task ResetCreditAutomationTransportRetry()
+    {
+        WithTempDirectory(root =>
+        {
+            var now = new DateTimeOffset(2026, 7, 28, 12, 0, 0, TimeSpan.FromHours(7));
+            var credit = ResetCredit("credit-retry", now.AddHours(2));
+            var statePath = Path.Combine(root, "reset-credit-state.json");
+            var store = new JsonStore();
+            var automation = new ResetCreditAutomation(statePath, store);
+            var first = automation.Evaluate([credit], ResetCreditMode.UseBeforeExpiry, now);
+            automation.RecordTransportFailure(first, now);
+
+            var restarted = new ResetCreditAutomation(statePath, store);
+            Equal(ResetCreditActionKind.None, restarted.Evaluate([credit], ResetCreditMode.UseBeforeExpiry, now.AddSeconds(30)).Action);
+            var retry = restarted.Evaluate([credit], ResetCreditMode.UseBeforeExpiry, now.AddMinutes(1));
+            Equal(ResetCreditActionKind.Consume, retry.Action);
+            Equal(first.IdempotencyKey, retry.IdempotencyKey);
+            Equal(first.Stage, retry.Stage);
+        });
+        return Task.CompletedTask;
+    }
+
+    private static Task ResetCreditAutomationEligibility()
+    {
+        WithTempDirectory(root =>
+        {
+            var now = new DateTimeOffset(2026, 7, 28, 12, 0, 0, TimeSpan.FromHours(7));
+            var automation = new ResetCreditAutomation(Path.Combine(root, "state.json"), new JsonStore());
+            var ineligible = new[]
+            {
+                ResetCredit("redeemed", now.AddHours(1)) with { Status = "redeemed" },
+                ResetCredit("wrong-type", now.AddHours(1)) with { ResetType = "unknown" },
+                ResetCredit("expired", now.AddMinutes(-1)),
+                ResetCredit("no-expiry", now.AddHours(1)) with { ExpiresAtUnix = null, ExpiresAtLocal = null }
+            };
+            Equal(ResetCreditActionKind.None, automation.Evaluate(ineligible, ResetCreditMode.UseBeforeExpiry, now).Action);
+
+            var later = ResetCredit("later", now.AddHours(3));
+            var earlier = ResetCredit("earlier", now.AddHours(2));
+            var decision = automation.Evaluate([later, earlier], ResetCreditMode.UseBeforeExpiry, now);
+            Equal("earlier", decision.Credit!.Id);
+            automation.RecordOutcome(decision, ResetCreditConsumeOutcome.Reset, now);
+            Equal(ResetCreditActionKind.None, automation.Evaluate([earlier], ResetCreditMode.UseBeforeExpiry, now.AddMinutes(1)).Action);
+
+            var notification = new ResetCreditAutomation(Path.Combine(root, "notify.json"), new JsonStore());
+            Equal(ResetCreditActionKind.Notify, notification.Evaluate([earlier], ResetCreditMode.NotifyBeforeExpiry, now).Action);
+            Equal(ResetCreditActionKind.None, notification.Evaluate([earlier], ResetCreditMode.NotifyBeforeExpiry, now.AddMinutes(1)).Action);
+        });
+        return Task.CompletedTask;
+    }
+
     private static Task GitHubReleaseSelection()
     {
         using var document = JsonDocument.Parse(
@@ -985,6 +1137,18 @@ internal static class Program
 
         var batteryPolicy = new AdaptiveRefreshPolicy();
         Equal(TimeSpan.FromMinutes(5), batteryPolicy.RecordSuccess(first, first, 2, false, PowerLineStatus.Offline));
+
+        var creditExpiry = reset.AddDays(2);
+        var withCredit = first with
+        {
+            ResetCreditsAvailable = 1,
+            ResetCredits = [ResetCredit("first-credit", creditExpiry)]
+        };
+        var replacement = withCredit with
+        {
+            ResetCredits = [ResetCredit("replacement-credit", creditExpiry.AddHours(-1))]
+        };
+        True(AdaptiveRefreshPolicy.HasUsageChanged(withCredit, replacement));
         return Task.CompletedTask;
     }
 
@@ -1139,6 +1303,18 @@ internal static class Program
     private static RateLimitBucket Bucket(int remaining, long reset) =>
         new("codex:primary", "Weekly", "codex", "primary", 100 - remaining, remaining, 10080, reset, DateTimeOffset.FromUnixTimeSeconds(reset).ToLocalTime(), null);
 
+    private static RateLimitResetCredit ResetCredit(string id, DateTimeOffset expiresAt) =>
+        new(
+            id,
+            "codexRateLimits",
+            "available",
+            expiresAt.AddDays(-1).ToUnixTimeSeconds(),
+            expiresAt.AddDays(-1),
+            expiresAt.ToUnixTimeSeconds(),
+            expiresAt,
+            "Full reset",
+            null);
+
     private static void WithTempDirectory(Action<string> action)
     {
         var root = Path.Combine(Path.GetTempPath(), "CodexUsageTray.Tests", Guid.NewGuid().ToString("N"));
@@ -1160,6 +1336,34 @@ internal static class Program
         True(menu.Renderer is ModernToolStripRenderer, "Root menu renderer should be modern.");
         True(child.DropDown.Renderer is ModernToolStripRenderer, "Submenu renderer should be modern.");
         True(child.Padding.Left >= 10 && child.Padding.Top >= 6, $"Expected padded menu item, actual {child.Padding}.");
+        return Task.CompletedTask;
+    }
+
+    private static Task UsagePopupHasNoScrollbar()
+    {
+        var now = new DateTimeOffset(2026, 7, 28, 12, 0, 0, TimeSpan.FromHours(7));
+        var snapshot = new UsageSnapshot
+        {
+            IsLive = true,
+            Status = ConnectionStatus.Connected,
+            PlanType = "prolite",
+            Buckets =
+            [
+                new("codex:primary", "Weekly", "codex", "primary", 20, 80, 10080, now.AddDays(7).ToUnixTimeSeconds(), now.AddDays(7), null),
+                new("spark:primary", "GPT-5.3-Codex-Spark", "spark", "primary", 5, 95, 10080, now.AddDays(7).ToUnixTimeSeconds(), now.AddDays(7), null)
+            ],
+            ResetCreditsAvailable = 1,
+            ResetCredits = [ResetCredit("popup-credit", now.AddDays(2))]
+        };
+
+        foreach (var style in Enum.GetValues<PopupStyle>())
+        {
+            using var popup = new UsagePopupForm(popupStyle: style);
+            popup.UpdateSnapshot(snapshot);
+            var content = popup.Controls.OfType<FlowLayoutPanel>().Single();
+            False(content.AutoScroll, $"{style} enabled AutoScroll.");
+        }
+
         return Task.CompletedTask;
     }
 

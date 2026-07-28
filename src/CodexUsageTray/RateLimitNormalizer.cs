@@ -25,16 +25,58 @@ public static class RateLimitNormalizer
         return buckets;
     }
 
-    public static int? ReadResetCredits(JsonElement response)
+    public static long? ReadResetCredits(JsonElement response)
+        => NormalizeResetCredits(response).AvailableCount;
+
+    public static ResetCreditSummary NormalizeResetCredits(JsonElement response)
     {
         if (response.TryGetProperty("rateLimitResetCredits", out var credits) &&
             credits.ValueKind == JsonValueKind.Object &&
-            TryGetInt32(credits, "availableCount", out var count))
+            credits.TryGetProperty("availableCount", out var countElement) &&
+            countElement.ValueKind == JsonValueKind.Number &&
+            countElement.TryGetInt64(out var count))
         {
-            return Math.Max(0, count);
+            List<RateLimitResetCredit>? details = null;
+            if (credits.TryGetProperty("credits", out var detailRows) && detailRows.ValueKind == JsonValueKind.Array)
+            {
+                details = [];
+                foreach (var item in detailRows.EnumerateArray())
+                {
+                    if (item.ValueKind != JsonValueKind.Object)
+                    {
+                        continue;
+                    }
+
+                    var id = ReadString(item, "id");
+                    var resetType = ReadString(item, "resetType");
+                    var status = ReadString(item, "status");
+                    var grantedAt = ReadNullableInt64(item, "grantedAt");
+                    if (string.IsNullOrWhiteSpace(id) ||
+                        string.IsNullOrWhiteSpace(resetType) ||
+                        string.IsNullOrWhiteSpace(status) ||
+                        grantedAt is null)
+                    {
+                        continue;
+                    }
+
+                    var expiresAt = ReadNullableInt64(item, "expiresAt");
+                    details.Add(new RateLimitResetCredit(
+                        id,
+                        resetType,
+                        status,
+                        grantedAt.Value,
+                        ToLocalTimestamp(grantedAt),
+                        expiresAt,
+                        ToLocalTimestamp(expiresAt),
+                        ReadString(item, "title"),
+                        ReadString(item, "description")));
+                }
+            }
+
+            return new ResetCreditSummary(Math.Max(0L, count), details);
         }
 
-        return null;
+        return new ResetCreditSummary(null, null);
     }
 
     public static TokenActivity NormalizeUsage(JsonElement? response, DateOnly localToday)
@@ -156,12 +198,7 @@ public static class RateLimitNormalizer
             var used = Math.Clamp(usedRaw, 0, 100);
             var duration = ReadNullableInt64(window, "windowDurationMins");
             var resetsAt = ReadNullableInt64(window, "resetsAt");
-            DateTimeOffset? localReset = null;
-            if (resetsAt is >= 0)
-            {
-                try { localReset = DateTimeOffset.FromUnixTimeSeconds(resetsAt.Value).ToLocalTime(); }
-                catch (ArgumentOutOfRangeException) { }
-            }
+            var localReset = ToLocalTimestamp(resetsAt);
 
             var durationName = FormatWindow(duration);
             var name = string.IsNullOrWhiteSpace(limitName)
@@ -186,6 +223,17 @@ public static class RateLimitNormalizer
 
     private static long? ReadNullableInt64(JsonElement element, string name) =>
         element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var number) ? number : null;
+
+    private static DateTimeOffset? ToLocalTimestamp(long? unixSeconds)
+    {
+        if (unixSeconds is not >= 0)
+        {
+            return null;
+        }
+
+        try { return DateTimeOffset.FromUnixTimeSeconds(unixSeconds.Value).ToLocalTime(); }
+        catch (ArgumentOutOfRangeException) { return null; }
+    }
 
     private static bool TryGetInt32(JsonElement element, string name, out int value)
     {

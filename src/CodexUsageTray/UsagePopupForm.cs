@@ -114,6 +114,10 @@ public sealed class UsagePopupForm : Form
         {
             FitPaperWindowToContent();
         }
+        else
+        {
+            FitClassicWindowToContent();
+        }
     }
 
     public void ShowNearTray()
@@ -168,7 +172,7 @@ public sealed class UsagePopupForm : Form
         {
             BackColor = ClassicBackground;
             _content.BackColor = ClassicBackground;
-            _content.AutoScroll = true;
+            _content.AutoScroll = false;
             _content.Padding = Padding.Empty;
             ClientSize = new Size(400, 540);
             Padding = new Padding(16);
@@ -185,7 +189,7 @@ public sealed class UsagePopupForm : Form
         var maxHeight = Math.Max(360, screen.WorkingArea.Height - 16);
         var desiredHeight = contentHeight + Padding.Vertical + 2;
         var targetHeight = Math.Min(desiredHeight, maxHeight);
-        _content.AutoScroll = desiredHeight > maxHeight;
+        _content.AutoScroll = false;
         ClientSize = new Size(430, targetHeight);
         _content.PerformLayout();
     }
@@ -198,8 +202,21 @@ public sealed class UsagePopupForm : Form
         var maxHeight = Math.Max(360, screen.WorkingArea.Height - 16);
         var desiredHeight = contentHeight + _content.Padding.Vertical + Padding.Vertical + 2;
         var targetHeight = Math.Min(desiredHeight, maxHeight);
-        _content.AutoScroll = desiredHeight > maxHeight;
+        _content.AutoScroll = false;
         ClientSize = new Size(430, targetHeight);
+        _content.PerformLayout();
+    }
+
+    private void FitClassicWindowToContent()
+    {
+        var contentHeight = _content.Controls.Cast<Control>()
+            .Sum(control => control.Height + control.Margin.Vertical);
+        var screen = Visible ? Screen.FromControl(this) : Screen.FromPoint(Cursor.Position);
+        var maxHeight = Math.Max(360, screen.WorkingArea.Height - 16);
+        var desiredHeight = contentHeight + Padding.Vertical + 2;
+        var targetHeight = Math.Min(desiredHeight, maxHeight);
+        _content.AutoScroll = false;
+        ClientSize = new Size(400, targetHeight);
         _content.PerformLayout();
     }
 
@@ -264,6 +281,16 @@ public sealed class UsagePopupForm : Form
             FontStyle.Regular,
             Color.FromArgb(213, 218, 226),
             28);
+        var nextCredit = NextExpiringResetCredit(snapshot);
+        if (nextCredit?.ExpiresAtLocal is not null)
+        {
+            AddClassicLabel(
+                $"Next expiry: {FormatResetCreditExpiry(nextCredit.ExpiresAtLocal.Value)}",
+                9,
+                FontStyle.Regular,
+                Color.FromArgb(164, 174, 190),
+                26);
+        }
 
         if (snapshot.TokenActivity.IsAvailable)
         {
@@ -389,7 +416,7 @@ public sealed class UsagePopupForm : Form
         }
 
         AddPaperDivider();
-        AddPaperCredits(snapshot.ResetCreditsAvailable);
+        AddPaperCredits(snapshot);
         AddPaperDivider();
         AddPaperTokenActivity(snapshot.TokenActivity);
         AddPaperDivider();
@@ -491,8 +518,9 @@ public sealed class UsagePopupForm : Form
         Margin = new Padding(0, 2, 0, 16)
     });
 
-    private void AddPaperCredits(int? available)
+    private void AddPaperCredits(UsageSnapshot snapshot)
     {
+        var nextCredit = NextExpiringResetCredit(snapshot);
         var panel = new Panel
         {
             Width = PaperContentWidth,
@@ -505,7 +533,7 @@ public sealed class UsagePopupForm : Form
         title.Location = new Point(0, 0);
         title.Size = new Size(225, 29);
         var value = CreatePaperLabel(
-            available is null ? "unavailable" : $"{available} available",
+            snapshot.ResetCreditsAvailable is null ? "unavailable" : $"{snapshot.ResetCreditsAvailable} available",
             10.5f,
             FontStyle.Bold,
             PaperInk,
@@ -513,7 +541,13 @@ public sealed class UsagePopupForm : Form
         value.TextAlign = ContentAlignment.TopRight;
         value.Location = new Point(220, 2);
         value.Size = new Size(150, 27);
-        var note = CreatePaperLabel("Expiry schedule unavailable from app-server", 9, FontStyle.Regular, PaperMuted);
+        var note = CreatePaperLabel(
+            nextCredit?.ExpiresAtLocal is null
+                ? "Expiry details unavailable"
+                : $"Next expiry {FormatResetCreditExpiry(nextCredit.ExpiresAtLocal.Value)}",
+            9,
+            FontStyle.Regular,
+            PaperMuted);
         note.Location = new Point(0, 36);
         note.Size = new Size(PaperContentWidth, 25);
         panel.Controls.AddRange([title, value, note]);
@@ -774,10 +808,11 @@ public sealed class UsagePopupForm : Form
 
     private void AddMacAccountCard(UsageSnapshot snapshot)
     {
+        var nextCredit = NextExpiringResetCredit(snapshot);
         var card = new RoundedPanel
         {
             Width = MacContentWidth,
-            Height = 90,
+            Height = nextCredit?.ExpiresAtLocal is null ? 90 : 116,
             Radius = 18,
             BackColor = MacCard,
             Margin = new Padding(0, 0, 0, 10),
@@ -792,9 +827,28 @@ public sealed class UsagePopupForm : Form
             66,
             "Reset credits",
             snapshot.ResetCreditsAvailable?.ToString(CultureInfo.CurrentCulture) ?? "Unavailable");
+        if (nextCredit?.ExpiresAtLocal is not null)
+        {
+            AddMacValueRow(card, 90, "Next expiry", FormatResetCreditExpiryCompact(nextCredit.ExpiresAtLocal.Value));
+        }
         card.Controls.Add(header);
         _content.Controls.Add(card);
     }
+
+    private static RateLimitResetCredit? NextExpiringResetCredit(UsageSnapshot snapshot) =>
+        snapshot.ResetCredits?
+            .Where(credit =>
+                string.Equals(credit.Status, "available", StringComparison.OrdinalIgnoreCase) &&
+                credit.ExpiresAtLocal is not null)
+            .OrderBy(credit => credit.ExpiresAtLocal)
+            .ThenBy(credit => credit.Id, StringComparer.Ordinal)
+            .FirstOrDefault();
+
+    private static string FormatResetCreditExpiry(DateTimeOffset value) =>
+        value.ToString("MMM d, yyyy HH:mm 'local'", CultureInfo.InvariantCulture);
+
+    private static string FormatResetCreditExpiryCompact(DateTimeOffset value) =>
+        value.ToString("MMM d, HH:mm", CultureInfo.InvariantCulture);
 
     private void AddMacTokenCard(TokenActivity activity)
     {

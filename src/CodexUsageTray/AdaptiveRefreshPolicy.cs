@@ -65,7 +65,21 @@ public sealed class AdaptiveRefreshPolicy
         var currentBuckets = current.Buckets
             .OrderBy(bucket => bucket.Key, StringComparer.Ordinal)
             .Select(ToFingerprint);
-        return !previousBuckets.SequenceEqual(currentBuckets);
+        if (!previousBuckets.SequenceEqual(currentBuckets))
+        {
+            return true;
+        }
+
+        var previousCredits = previous.ResetCredits?
+            .OrderBy(credit => credit.ExpiresAtUnix)
+            .ThenBy(credit => credit.Id, StringComparer.Ordinal)
+            .Select(ToFingerprint);
+        var currentCredits = current.ResetCredits?
+            .OrderBy(credit => credit.ExpiresAtUnix)
+            .ThenBy(credit => credit.Id, StringComparer.Ordinal)
+            .Select(ToFingerprint);
+        return previousCredits is null != currentCredits is null ||
+               previousCredits is not null && currentCredits is not null && !previousCredits.SequenceEqual(currentCredits);
     }
 
     private static BucketFingerprint ToFingerprint(RateLimitBucket bucket) => new(
@@ -75,10 +89,22 @@ public sealed class AdaptiveRefreshPolicy
         bucket.ResetsAtUnix,
         bucket.RateLimitReachedType);
 
+    private static ResetCreditFingerprint ToFingerprint(RateLimitResetCredit credit) => new(
+        credit.Id,
+        credit.ResetType,
+        credit.Status,
+        credit.ExpiresAtUnix);
+
     private readonly record struct BucketFingerprint(
         string Key,
         int UsedPercent,
         int RemainingPercent,
         long? ResetsAtUnix,
         string? ReachedType);
+
+    private readonly record struct ResetCreditFingerprint(
+        string Id,
+        string ResetType,
+        string Status,
+        long? ExpiresAtUnix);
 }
