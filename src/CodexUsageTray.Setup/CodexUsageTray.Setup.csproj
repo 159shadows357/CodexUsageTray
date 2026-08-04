@@ -7,7 +7,7 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>CodexUsageTray-Setup</AssemblyName>
     <RootNamespace>CodexUsageTray.Setup</RootNamespace>
-    <Version>0.5.0</Version>
+    <Version>0.6.0</Version>
     <Authors>Pongsathon.T</Authors>
     <Company>Pongsathon.T</Company>
     <Product>Codex Usage Tray Setup</Product>

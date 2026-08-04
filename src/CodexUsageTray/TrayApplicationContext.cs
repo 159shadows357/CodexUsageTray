@@ -6,6 +6,8 @@ namespace CodexUsageTray;
 
 public sealed class TrayApplicationContext : ApplicationContext
 {
+    private static readonly TimeSpan OpenAiStatusInterval = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan OpenAiStatusRetryInterval = TimeSpan.FromMinutes(1);
     private static readonly TimeSpan[] RetryDelays =
     [
         TimeSpan.FromSeconds(2),
@@ -25,14 +27,19 @@ public sealed class TrayApplicationContext : ApplicationContext
     private readonly ModernContextMenuStrip _contextMenu;
     private readonly Form? _menuSmokeHost;
     private readonly ToolStripMenuItem _startupItem;
+    private readonly ToolStripMenuItem _codexStatusItem;
+    private readonly ToolStripMenuItem _chatGptStatusItem;
+    private readonly ToolStripMenuItem _openAiStatusCheckedItem;
     private readonly System.Windows.Forms.Timer _timer;
     private readonly SemaphoreSlim _refreshGate = new(1, 1);
+    private readonly SemaphoreSlim _openAiStatusRefreshGate = new(1, 1);
     private readonly SemaphoreSlim _updateGate = new(1, 1);
     private readonly CancellationTokenSource _shutdown = new();
     private readonly NotificationTracker _notificationTracker;
     private readonly SingleInstanceCoordinator _singleInstance;
     private readonly LocalUsageAnalyzer _localUsageAnalyzer;
     private readonly GitHubReleaseUpdater _updater;
+    private readonly OpenAiStatusClient _openAiStatusClient;
     private readonly ResetCreditAutomation _resetCreditAutomation;
     private readonly AdaptiveRefreshPolicy _adaptiveRefreshPolicy = new();
     private readonly Dictionary<TrayIconStyle, ToolStripMenuItem> _iconStyleItems = new();
@@ -41,7 +48,9 @@ public sealed class TrayApplicationContext : ApplicationContext
     private readonly Dictionary<UpdateMode, ToolStripMenuItem> _updateModeItems = new();
     private CodexAppServerSession? _session;
     private UsageSnapshot _snapshot;
+    private OpenAiStatusSnapshot _openAiStatus = new();
     private DateTimeOffset _nextRefreshAt = DateTimeOffset.Now;
+    private DateTimeOffset _nextOpenAiStatusCheckAt = DateTimeOffset.Now;
     private DateTimeOffset _nextUpdateCheckAt = DateTimeOffset.MaxValue;
     private int _retryIndex;
     private volatile bool _externalRefreshRequested;
@@ -52,6 +61,7 @@ public sealed class TrayApplicationContext : ApplicationContext
     private bool _exiting;
     private Icon? _currentIcon;
     private Task? _activeRefresh;
+    private Task? _activeOpenAiStatusRefresh;
     private Task? _activeUpdate;
     private TrayIconVisualKey? _iconVisualKey;
     private TimeSpan? _lastRefreshDelay;
@@ -77,6 +87,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         _notificationTracker = new NotificationTracker(paths.NotificationState);
         _localUsageAnalyzer = new LocalUsageAnalyzer(paths.LocalUsageIndex, store);
         _updater = new GitHubReleaseUpdater(paths.Updates);
+        _openAiStatusClient = new OpenAiStatusClient();
         _resetCreditAutomation = new ResetCreditAutomation(paths.ResetCreditAutomationState, store);
         if (!File.Exists(paths.Settings))
         {
@@ -88,8 +99,9 @@ public sealed class TrayApplicationContext : ApplicationContext
             closeOnDeactivate: !pinPopupForSmokeTest,
             popupStyle: _settings.PopupStyle,
             showInTaskbarForSmokeTest: pinPopupForSmokeTest);
-        _popup.RefreshRequested += (_, _) => RequestRefresh();
+        _popup.RefreshRequested += (_, _) => RequestAllRefreshes();
         _popup.UpdateSnapshot(_snapshot);
+        _popup.UpdateOpenAiStatus(_openAiStatus);
         _details = new UsageDetailsForm();
         _details.UpdateEstimate(_snapshot.ApiEquivalent);
 
@@ -97,7 +109,21 @@ public sealed class TrayApplicationContext : ApplicationContext
         var menu = _contextMenu;
         menu.Items.Add("Open Usage", null, (_, _) => OpenUsage());
         menu.Items.Add("Usage details", null, (_, _) => OpenUsageDetails());
-        menu.Items.Add("Refresh now", null, (_, _) => RequestRefresh());
+        menu.Items.Add("Refresh now", null, (_, _) => RequestAllRefreshes());
+        var openAiStatusMenu = new ToolStripMenuItem("OpenAI status");
+        _codexStatusItem = new ToolStripMenuItem("Codex: Checking...");
+        _codexStatusItem.Click += (_, _) => OpenLink(AppLinks.OpenAiStatus, "Open OpenAI status");
+        _chatGptStatusItem = new ToolStripMenuItem("ChatGPT: Checking...");
+        _chatGptStatusItem.Click += (_, _) => OpenLink(AppLinks.OpenAiStatus, "Open OpenAI status");
+        _openAiStatusCheckedItem = new ToolStripMenuItem("Last checked: pending") { Enabled = false };
+        openAiStatusMenu.DropDownItems.Add(_codexStatusItem);
+        openAiStatusMenu.DropDownItems.Add(_chatGptStatusItem);
+        openAiStatusMenu.DropDownItems.Add(_openAiStatusCheckedItem);
+        openAiStatusMenu.DropDownItems.Add(new ToolStripSeparator());
+        openAiStatusMenu.DropDownItems.Add("Refresh status", null, (_, _) => RequestOpenAiStatusRefresh());
+        openAiStatusMenu.DropDownItems.Add("Open status.openai.com", null, (_, _) =>
+            OpenLink(AppLinks.OpenAiStatus, "Open OpenAI status"));
+        menu.Items.Add(openAiStatusMenu);
         menu.Items.Add(new ToolStripSeparator());
         _startupItem = new ToolStripMenuItem("Start with Windows")
         {
@@ -264,6 +290,13 @@ public sealed class TrayApplicationContext : ApplicationContext
             UpdateTray();
         }
 
+        if (!_exiting &&
+            DateTimeOffset.Now >= _nextOpenAiStatusCheckAt &&
+            (_activeOpenAiStatusRefresh is null || _activeOpenAiStatusRefresh.IsCompleted))
+        {
+            _activeOpenAiStatusRefresh = RefreshOpenAiStatusAsync();
+        }
+
         if (!_exiting && DateTimeOffset.Now >= _nextRefreshAt && (_activeRefresh is null || _activeRefresh.IsCompleted))
         {
             _activeRefresh = RefreshAsync();
@@ -283,6 +316,45 @@ public sealed class TrayApplicationContext : ApplicationContext
     {
         _nextRefreshAt = DateTimeOffset.Now;
         _externalRefreshRequested = true;
+    }
+
+    private void RequestAllRefreshes()
+    {
+        RequestRefresh();
+        RequestOpenAiStatusRefresh();
+    }
+
+    private void RequestOpenAiStatusRefresh() => _nextOpenAiStatusCheckAt = DateTimeOffset.Now;
+
+    private async Task RefreshOpenAiStatusAsync()
+    {
+        if (!await _openAiStatusRefreshGate.WaitAsync(0)) return;
+
+        try
+        {
+            var previous = _openAiStatus;
+            var current = await _openAiStatusClient.ReadAsync(_shutdown.Token);
+            _nextOpenAiStatusCheckAt = DateTimeOffset.Now.Add(OpenAiStatusInterval);
+            SetOpenAiStatus(current);
+            NotifyOpenAiStatusTransitions(previous, current);
+            _logger.Info(
+                $"OpenAI status refreshed. Codex={current.Codex}; ChatGPT={current.ChatGpt}; " +
+                $"next={_nextOpenAiStatusCheckAt:O}.");
+        }
+        catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
+        {
+        }
+        catch (Exception error)
+        {
+            var safeMessage = SecretSanitizer.Sanitize(error.Message);
+            _nextOpenAiStatusCheckAt = DateTimeOffset.Now.Add(OpenAiStatusRetryInterval);
+            SetOpenAiStatus(OpenAiStatusSnapshot.Unavailable(safeMessage));
+            _logger.Error($"OpenAI status refresh failed: {safeMessage}");
+        }
+        finally
+        {
+            _openAiStatusRefreshGate.Release();
+        }
     }
 
     private async Task RefreshAsync()
@@ -535,6 +607,59 @@ public sealed class TrayApplicationContext : ApplicationContext
         _popup.UpdateSnapshot(snapshot);
         _details.UpdateEstimate(snapshot.ApiEquivalent);
         UpdateTray();
+    }
+
+    private void SetOpenAiStatus(OpenAiStatusSnapshot status)
+    {
+        _openAiStatus = status;
+        _codexStatusItem.Text = $"Codex: {OpenAiStatusClient.DisplayText(status.Codex)}";
+        _chatGptStatusItem.Text = $"ChatGPT: {OpenAiStatusClient.DisplayText(status.ChatGpt)}";
+        _openAiStatusCheckedItem.Text = status.IsLive
+            ? $"Last checked: {status.CheckedAt.ToLocalTime():HH:mm}"
+            : $"Status unavailable: {status.CheckedAt.ToLocalTime():HH:mm}";
+        _popup.UpdateOpenAiStatus(status);
+    }
+
+    private void NotifyOpenAiStatusTransitions(OpenAiStatusSnapshot previous, OpenAiStatusSnapshot current)
+    {
+        var messages = OpenAiStatusTransitionMessages(previous, current);
+        if (messages.Count == 0) return;
+
+        var hasIncident = OpenAiStatusClient.IsIncident(current.Codex) ||
+            OpenAiStatusClient.IsIncident(current.ChatGpt);
+        _trayIcon.ShowBalloonTip(
+            5000,
+            "OpenAI status",
+            string.Join(Environment.NewLine, messages),
+            hasIncident ? ToolTipIcon.Warning : ToolTipIcon.Info);
+    }
+
+    internal static IReadOnlyList<string> OpenAiStatusTransitionMessages(
+        OpenAiStatusSnapshot previous,
+        OpenAiStatusSnapshot current)
+    {
+        if (!previous.IsLive || !current.IsLive) return [];
+
+        var messages = new List<string>();
+        AddOpenAiStatusTransition(messages, "Codex", previous.Codex, current.Codex);
+        AddOpenAiStatusTransition(messages, "ChatGPT", previous.ChatGpt, current.ChatGpt);
+        return messages;
+    }
+
+    private static void AddOpenAiStatusTransition(
+        ICollection<string> messages,
+        string service,
+        OpenAiServiceHealth previous,
+        OpenAiServiceHealth current)
+    {
+        if (previous == OpenAiServiceHealth.Operational && OpenAiStatusClient.IsIncident(current))
+        {
+            messages.Add($"{service}: {OpenAiStatusClient.DisplayText(current)}");
+        }
+        else if (OpenAiStatusClient.IsIncident(previous) && current == OpenAiServiceHealth.Operational)
+        {
+            messages.Add($"{service}: Operational");
+        }
     }
 
     private void UpdateTray()
@@ -926,6 +1051,9 @@ public sealed class TrayApplicationContext : ApplicationContext
             OS: {RuntimeInformation.OSDescription}
             Framework: {RuntimeInformation.FrameworkDescription}
             Status: {_snapshot.Status}
+            OpenAI Codex status: {_openAiStatus.Codex}
+            OpenAI ChatGPT status: {_openAiStatus.ChatGpt}
+            OpenAI status checked: {_openAiStatus.CheckedAt:O}; live={_openAiStatus.IsLive}
             Tray icon style: {_settings.TrayIconStyle}
             Popup style: {_settings.PopupStyle}
             Reset credit mode: {_settings.ResetCreditMode}
@@ -951,10 +1079,11 @@ public sealed class TrayApplicationContext : ApplicationContext
     }
 
     private static void ShowAbout() => MessageBox.Show(
-        $"Codex Usage Tray\nVersion {Application.ProductVersion}\n" +
-        "by Pongsathon.T\n\n" +
-        "Reads quota from the local Codex app-server and estimates API-equivalent cost from local Codex session token counters.\n" +
-        $"Updates: public GitHub Releases from {GitHubReleaseUpdater.Repository}",
+         $"Codex Usage Tray\nVersion {Application.ProductVersion}\n" +
+         "by Pongsathon.T\n\n" +
+         "Reads quota from the local Codex app-server, shows aggregate OpenAI service status, " +
+         "and estimates API-equivalent cost from local Codex session token counters.\n" +
+         $"Updates: public GitHub Releases from {GitHubReleaseUpdater.Repository}",
         "About Codex Usage Tray",
         MessageBoxButtons.OK,
         MessageBoxIcon.Information);
@@ -966,7 +1095,11 @@ public sealed class TrayApplicationContext : ApplicationContext
     private void OnProcessExited(object? sender, EventArgs eventArgs) => _externalRefreshRequested = true;
     private void OnPowerModeChanged(object sender, PowerModeChangedEventArgs eventArgs)
     {
-        if (eventArgs.Mode == PowerModes.Resume) _externalRefreshRequested = true;
+        if (eventArgs.Mode == PowerModes.Resume)
+        {
+            _externalRefreshRequested = true;
+            RequestOpenAiStatusRefresh();
+        }
     }
     private void OnDisplaySettingsChanged(object? sender, EventArgs eventArgs) => _iconRefreshRequested = true;
 
@@ -997,6 +1130,10 @@ public sealed class TrayApplicationContext : ApplicationContext
         {
             try { await _activeUpdate; } catch { }
         }
+        if (_activeOpenAiStatusRefresh is not null)
+        {
+            try { await _activeOpenAiStatusRefresh; } catch { }
+        }
         try { await DisposeSessionAsync(); } catch { }
         _trayIcon.Icon = null;
         _trayIcon.Visible = false;
@@ -1007,8 +1144,10 @@ public sealed class TrayApplicationContext : ApplicationContext
         _details.Dispose();
         _menuSmokeHost?.Dispose();
         _refreshGate.Dispose();
+        _openAiStatusRefreshGate.Dispose();
         _updateGate.Dispose();
         _updater.Dispose();
+        _openAiStatusClient.Dispose();
         _shutdown.Dispose();
         _logger.Info("Codex Usage Tray stopped.");
         base.ExitThreadCore();

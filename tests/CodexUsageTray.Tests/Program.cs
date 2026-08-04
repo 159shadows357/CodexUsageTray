@@ -63,6 +63,10 @@ internal static class Program
         ("paper popup style persists", PaperPopupStyleSettings),
         ("update mode persists and legacy settings default to off", UpdateModeSettings),
         ("public GitHub requests do not send authorization", PublicGitHubRequestHasNoAuthorization),
+        ("OpenAI status parser aggregates Codex and ChatGPT components", OpenAiStatusAggregation),
+        ("OpenAI status parser surfaces outages and missing components", OpenAiStatusOutageAndMissingComponents),
+        ("OpenAI status request is public and exact", OpenAiStatusRequestIsPublic),
+        ("OpenAI status notifications require a live incident transition", OpenAiStatusTransitions),
         ("updater removes staging data from older versions", UpdaterRemovesOldStagingDirectories),
         ("GitHub release parser compares versions and selects exact asset", GitHubReleaseSelection),
         ("GitHub release parser rejects unsafe metadata", GitHubReleaseUnsafeMetadata),
@@ -80,6 +84,7 @@ internal static class Program
         ("protocol compatibility reports unknown schema without throwing", ProtocolCompatibilityDrift),
         ("tray context menu uses dark modern renderer", ModernContextMenuStyle),
         ("usage popup styles keep scrollbars disabled", UsagePopupHasNoScrollbar),
+        ("usage popup styles show Codex and ChatGPT service status", UsagePopupShowsOpenAiStatus),
         ("tray icon replacement does not leak GDI handles", TrayIconDoesNotLeak),
         ("tray tooltip preserves exact percentage", TrayTooltipPreservesPercentage)
     ];
@@ -817,6 +822,86 @@ internal static class Program
         return Task.CompletedTask;
     }
 
+    private static Task OpenAiStatusAggregation()
+    {
+        using var document = CreateOpenAiStatusSummary();
+        var checkedAt = new DateTimeOffset(2026, 8, 4, 14, 30, 0, TimeSpan.FromHours(7));
+        var result = OpenAiStatusClient.ParseComponents(document.RootElement, checkedAt);
+
+        True(result.IsLive);
+        Equal(checkedAt, result.CheckedAt);
+        Equal(OpenAiServiceHealth.Operational, result.Codex);
+        Equal(OpenAiServiceHealth.Operational, result.ChatGpt);
+        return Task.CompletedTask;
+    }
+
+    private static Task OpenAiStatusOutageAndMissingComponents()
+    {
+        using (var outage = CreateOpenAiStatusSummary(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Codex API"] = "partial_outage",
+            ["Conversations"] = "degraded_performance"
+        }))
+        {
+            var result = OpenAiStatusClient.ParseComponents(outage.RootElement, DateTimeOffset.Now);
+            Equal(OpenAiServiceHealth.PartialOutage, result.Codex);
+            Equal(OpenAiServiceHealth.DegradedPerformance, result.ChatGpt);
+        }
+
+        using (var missing = CreateOpenAiStatusSummary(omit: "CLI"))
+        {
+            var result = OpenAiStatusClient.ParseComponents(missing.RootElement, DateTimeOffset.Now);
+            Equal(OpenAiServiceHealth.Unavailable, result.Codex);
+            Equal(OpenAiServiceHealth.Operational, result.ChatGpt);
+        }
+
+        using (var unknown = CreateOpenAiStatusSummary(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["CLI"] = "new_status_value"
+        }))
+        {
+            var result = OpenAiStatusClient.ParseComponents(unknown.RootElement, DateTimeOffset.Now);
+            Equal(OpenAiServiceHealth.Unavailable, result.Codex);
+        }
+        return Task.CompletedTask;
+    }
+
+    private static Task OpenAiStatusRequestIsPublic()
+    {
+        using var request = OpenAiStatusClient.CreateComponentsRequest();
+        Equal(HttpMethod.Get, request.Method);
+        Equal(OpenAiStatusClient.ComponentsUrl, request.RequestUri?.AbsoluteUri);
+        True(request.Headers.Authorization is null);
+        True(request.Headers.Accept.Any(value => value.MediaType == "application/json"));
+        return Task.CompletedTask;
+    }
+
+    private static Task OpenAiStatusTransitions()
+    {
+        var loading = new OpenAiStatusSnapshot
+        {
+            IsLive = false,
+            Codex = OpenAiServiceHealth.Loading,
+            ChatGpt = OpenAiServiceHealth.Loading
+        };
+        var operational = new OpenAiStatusSnapshot
+        {
+            IsLive = true,
+            Codex = OpenAiServiceHealth.Operational,
+            ChatGpt = OpenAiServiceHealth.Operational
+        };
+        var incident = operational with { Codex = OpenAiServiceHealth.DegradedPerformance };
+
+        Empty(TrayApplicationContext.OpenAiStatusTransitionMessages(loading, incident));
+        var outageMessages = TrayApplicationContext.OpenAiStatusTransitionMessages(operational, incident);
+        Equal(1, outageMessages.Count);
+        Equal("Codex: Degraded performance", outageMessages[0]);
+        var recoveryMessages = TrayApplicationContext.OpenAiStatusTransitionMessages(incident, operational);
+        Equal(1, recoveryMessages.Count);
+        Equal("Codex: Operational", recoveryMessages[0]);
+        return Task.CompletedTask;
+    }
+
     private static Task UpdaterRemovesOldStagingDirectories()
     {
         WithTempDirectory(root =>
@@ -1365,6 +1450,81 @@ internal static class Program
         }
 
         return Task.CompletedTask;
+    }
+
+    private static Task UsagePopupShowsOpenAiStatus()
+    {
+        var status = new OpenAiStatusSnapshot
+        {
+            IsLive = true,
+            Codex = OpenAiServiceHealth.Operational,
+            ChatGpt = OpenAiServiceHealth.DegradedPerformance
+        };
+
+        foreach (var style in Enum.GetValues<PopupStyle>())
+        {
+            using var popup = new UsagePopupForm(popupStyle: style);
+            popup.UpdateOpenAiStatus(status);
+            var text = Descendants(popup)
+                .Select(control => control.Text)
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .ToList();
+            True(text.Contains("Codex"), $"{style} did not show the Codex label.");
+            True(text.Contains("ChatGPT"), $"{style} did not show the ChatGPT label.");
+            True(text.Contains("Operational"), $"{style} did not show the Codex status value.");
+            True(text.Contains("Degraded performance"), $"{style} did not show the ChatGPT status value.");
+            Equal(2, Descendants(popup).OfType<OpenAiStatusGraph>().Count());
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private static JsonDocument CreateOpenAiStatusSummary(
+        IReadOnlyDictionary<string, string>? overrides = null,
+        string? omit = null)
+    {
+        string[] componentNames =
+        [
+            "Codex Web",
+            "VS Code extension",
+            "Codex API",
+            "CLI",
+            "Sites",
+            "Codex in ChatGPT Desktop",
+            "Login",
+            "Conversations",
+            "Search",
+            "Sora",
+            "GPTs",
+            "ChatGPT Atlas",
+            "Deep Research",
+            "Image Generation",
+            "Agent",
+            "Voice mode",
+            "Connectors/Apps",
+            "ChatGPT Work",
+            "File uploads"
+        ];
+        var components = componentNames
+            .Where(name => !string.Equals(name, omit, StringComparison.OrdinalIgnoreCase))
+            .Select((name, index) => new
+            {
+                id = $"test-{index}",
+                name,
+                status = overrides is not null && overrides.TryGetValue(name, out var value)
+                    ? value
+                    : "operational"
+            });
+        return JsonDocument.Parse(JsonSerializer.Serialize(new { components }));
+    }
+
+    private static IEnumerable<Control> Descendants(Control parent)
+    {
+        foreach (Control child in parent.Controls)
+        {
+            yield return child;
+            foreach (var descendant in Descendants(child)) yield return descendant;
+        }
     }
 
     private static void True(bool condition, string? message = null)

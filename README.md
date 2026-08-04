@@ -20,6 +20,7 @@ This personal project is unofficial and is not affiliated with OpenAI.
 - Provides `Usage details` for the last 7 days, last 30 days, all time, daily activity, and every local project.
 - Uses an incremental local index so unchanged Codex session files are not parsed again.
 - Refreshes adaptively every 1, 2, or 5 minutes, with manual, notification, and resume refresh.
+- Shows aggregate Codex and ChatGPT service status as segmented health graphs from the public OpenAI Status API.
 - Checks public GitHub Releases manually, in notify-only mode, or with opt-in automatic installation.
 - Verifies the GitHub asset SHA-256, ZIP paths, size limits, and internal `SHA256SUMS.txt`.
 - Shows `Data stale` when cached usage is older than 10 minutes.
@@ -72,7 +73,7 @@ pwsh -File .\scripts\test.ps1
 dotnet format .\CodexUsageTray.slnx --verify-no-changes --no-restore
 ```
 
-The test project uses a package-free runner. The current suite contains 68 tests.
+The test project uses a package-free runner. The current suite contains 73 tests.
 
 Run from source:
 
@@ -83,21 +84,21 @@ dotnet run --project .\src\CodexUsageTray\CodexUsageTray.csproj -c Release
 Publish the application:
 
 ```powershell
-pwsh -File .\scripts\publish.ps1 -Version 0.5.0
+pwsh -File .\scripts\publish.ps1 -Version 0.6.0
 ```
 
 Create the installer ZIP:
 
 ```powershell
-pwsh -File .\scripts\package-release.ps1 -Version 0.5.0
+pwsh -File .\scripts\package-release.ps1 -Version 0.6.0
 ```
 
 Output:
 
 ```text
 artifacts\publish\win-x64\CodexUsageTray.exe
-artifacts\release\CodexUsageTray-0.5.0-win-x64.zip
-artifacts\release\CodexUsageTray-0.5.0-win-x64.zip.sha256
+artifacts\release\CodexUsageTray-0.6.0-win-x64.zip
+artifacts\release\CodexUsageTray-0.6.0-win-x64.zip.sha256
 ```
 
 The ZIP contains `CodexUsageTray-Setup.exe`, `CodexUsageTray.exe`, `README.txt`, `LICENSE.txt`, and `SHA256SUMS.txt`.
@@ -111,7 +112,7 @@ $thumbprint = Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert |
   Where-Object HasPrivateKey |
   Select-Object -First 1 -ExpandProperty Thumbprint
 pwsh -File .\scripts\package-release.ps1 `
-  -Version 0.5.0 `
+  -Version 0.6.0 `
   -CodeSigningThumbprint $thumbprint
 ```
 
@@ -175,6 +176,14 @@ The application reads `%USERPROFILE%\.codex\sessions\**\*.jsonl` in read-only mo
 - Three unchanged refreshes or battery power: at least 5 minutes.
 - App-server notification, manual refresh, and resume: immediate refresh.
 - Connection failures: backoff of 2, 5, 10, 30, and 60 seconds.
+
+## OpenAI service status
+
+The popup shows separate segmented current-health graphs for Codex and ChatGPT, while the `OpenAI status` tray submenu shows the exact state text from [`status.openai.com`](https://status.openai.com/). The application reads the public `components.json` endpoint every 5 minutes and on manual status refresh. Requests contain no account token or `Authorization` header.
+
+The tray notification appears when a previously operational service changes to maintenance, degraded performance, partial outage, or major outage, and when that service recovers. A request error or missing component is shown as `Unavailable`; it does not change the local Codex usage connection state.
+
+OpenAI reports these values at an aggregate level. An operational value does not rule out a problem limited to one account, plan, model, feature, or region.
 
 ## Public updates
 

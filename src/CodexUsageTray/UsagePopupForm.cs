@@ -26,6 +26,7 @@ public sealed class UsagePopupForm : Form
     private readonly FlowLayoutPanel _content;
     private readonly bool _closeOnDeactivate;
     private UsageSnapshot _snapshot = new();
+    private OpenAiStatusSnapshot _openAiStatus = new();
     private DateTimeOffset _shownAt;
     private PopupStyle _popupStyle;
 
@@ -118,6 +119,12 @@ public sealed class UsagePopupForm : Form
         {
             FitClassicWindowToContent();
         }
+    }
+
+    internal void UpdateOpenAiStatus(OpenAiStatusSnapshot status)
+    {
+        _openAiStatus = status;
+        UpdateSnapshot(_snapshot);
     }
 
     public void ShowNearTray()
@@ -261,6 +268,7 @@ public sealed class UsagePopupForm : Form
             AddClassicLabel($"Plan: {snapshot.PlanType}", 9, FontStyle.Regular, Color.FromArgb(164, 174, 190), 25);
         }
         AddClassicLabel(StatusText(snapshot.Status), 10, FontStyle.Bold, StatusColor(snapshot.Status), 30);
+        AddClassicOpenAiStatus();
 
         if (snapshot.Buckets.Count == 0)
         {
@@ -372,6 +380,42 @@ public sealed class UsagePopupForm : Form
         Margin = new Padding(0, 8, 0, 8)
     });
 
+    private void AddClassicOpenAiStatus()
+    {
+        var panel = new Panel
+        {
+            Width = ClassicContentWidth,
+            Height = 80,
+            Margin = new Padding(0, 2, 0, 8),
+            BackColor = Color.FromArgb(31, 34, 41),
+            AccessibleName = $"OpenAI status, Codex {OpenAiStatusClient.DisplayText(_openAiStatus.Codex)}, " +
+                $"ChatGPT {OpenAiStatusClient.DisplayText(_openAiStatus.ChatGpt)}"
+        };
+        var title = CreateLabel("OpenAI status", 9, FontStyle.Bold, Color.FromArgb(190, 197, 209));
+        title.Location = new Point(12, 5);
+        title.Size = new Size(326, 20);
+        AddOpenAiStatusGraphRow(
+            panel,
+            28,
+            "Codex",
+            _openAiStatus.Codex,
+            Color.FromArgb(55, 59, 69),
+            OpenAiStatusColor(_openAiStatus.Codex),
+            Color.White,
+            OpenAiStatusColor(_openAiStatus.Codex));
+        AddOpenAiStatusGraphRow(
+            panel,
+            52,
+            "ChatGPT",
+            _openAiStatus.ChatGpt,
+            Color.FromArgb(55, 59, 69),
+            OpenAiStatusColor(_openAiStatus.ChatGpt),
+            Color.White,
+            OpenAiStatusColor(_openAiStatus.ChatGpt));
+        panel.Controls.Add(title);
+        _content.Controls.Add(panel);
+    }
+
     private void AddClassicApiEquivalent(ApiEquivalentEstimate estimate)
     {
         if (!estimate.IsAvailable)
@@ -402,6 +446,8 @@ public sealed class UsagePopupForm : Form
     private void RenderPaperStyle(UsageSnapshot snapshot)
     {
         AddPaperHeader(snapshot);
+        AddPaperOpenAiStatus();
+        AddPaperDivider();
 
         if (snapshot.Buckets.Count == 0)
         {
@@ -517,6 +563,44 @@ public sealed class UsagePopupForm : Form
         Height = 1,
         Margin = new Padding(0, 2, 0, 16)
     });
+
+    private void AddPaperOpenAiStatus()
+    {
+        var panel = new Panel
+        {
+            Width = PaperContentWidth,
+            Height = 80,
+            BackColor = PaperBackground,
+            Margin = new Padding(0, 0, 0, 10),
+            AccessibleName = $"OpenAI status, Codex {OpenAiStatusClient.DisplayText(_openAiStatus.Codex)}, " +
+                $"ChatGPT {OpenAiStatusClient.DisplayText(_openAiStatus.ChatGpt)}"
+        };
+        var title = CreatePaperLabel("OpenAI Status", 10, FontStyle.Bold, PaperInk, monospace: true);
+        title.Location = new Point(0, 0);
+        title.Size = new Size(PaperContentWidth, 24);
+        AddOpenAiStatusGraphRow(
+            panel,
+            28,
+            "Codex",
+            _openAiStatus.Codex,
+            PaperTrack,
+            PaperOpenAiStatusColor(_openAiStatus.Codex),
+            PaperInk,
+            PaperOpenAiStatusColor(_openAiStatus.Codex),
+            monospace: true);
+        AddOpenAiStatusGraphRow(
+            panel,
+            54,
+            "ChatGPT",
+            _openAiStatus.ChatGpt,
+            PaperTrack,
+            PaperOpenAiStatusColor(_openAiStatus.ChatGpt),
+            PaperInk,
+            PaperOpenAiStatusColor(_openAiStatus.ChatGpt),
+            monospace: true);
+        panel.Controls.Add(title);
+        _content.Controls.Add(panel);
+    }
 
     private void AddPaperCredits(UsageSnapshot snapshot)
     {
@@ -661,6 +745,7 @@ public sealed class UsagePopupForm : Form
     {
         AddMacHeader(snapshot.PlanType);
         AddMacStatusRow(snapshot);
+        AddMacOpenAiStatusCard();
 
         if (snapshot.Buckets.Count == 0)
         {
@@ -739,6 +824,43 @@ public sealed class UsagePopupForm : Form
         plan.Size = new Size(176, 24);
         row.Controls.AddRange([status, plan]);
         _content.Controls.Add(row);
+    }
+
+    private void AddMacOpenAiStatusCard()
+    {
+        var card = new RoundedPanel
+        {
+            Width = MacContentWidth,
+            Height = 88,
+            Radius = 16,
+            BackColor = MacCard,
+            Margin = new Padding(0, 0, 0, 10),
+            AccessibleName = $"OpenAI status, Codex {OpenAiStatusClient.DisplayText(_openAiStatus.Codex)}, " +
+                $"ChatGPT {OpenAiStatusClient.DisplayText(_openAiStatus.ChatGpt)}"
+        };
+        var title = CreateLabel("OpenAI status", 9, FontStyle.Bold, MacMuted);
+        title.Location = new Point(18, 8);
+        title.Size = new Size(336, 20);
+        AddOpenAiStatusGraphRow(
+            card,
+            34,
+            "Codex",
+            _openAiStatus.Codex,
+            Color.FromArgb(70, 94, 115),
+            OpenAiStatusColor(_openAiStatus.Codex),
+            MacText,
+            OpenAiStatusColor(_openAiStatus.Codex));
+        AddOpenAiStatusGraphRow(
+            card,
+            60,
+            "ChatGPT",
+            _openAiStatus.ChatGpt,
+            Color.FromArgb(70, 94, 115),
+            OpenAiStatusColor(_openAiStatus.ChatGpt),
+            MacText,
+            OpenAiStatusColor(_openAiStatus.ChatGpt));
+        card.Controls.Add(title);
+        _content.Controls.Add(card);
     }
 
     private void AddMacBucket(RateLimitBucket bucket)
@@ -1059,6 +1181,75 @@ public sealed class UsagePopupForm : Form
         _ => Color.FromArgb(255, 102, 102)
     };
 
+    private static Color OpenAiStatusColor(OpenAiServiceHealth status) => status switch
+    {
+        OpenAiServiceHealth.Operational => Color.FromArgb(64, 221, 116),
+        OpenAiServiceHealth.Loading => Color.FromArgb(88, 166, 255),
+        OpenAiServiceHealth.UnderMaintenance or OpenAiServiceHealth.DegradedPerformance => Color.FromArgb(255, 172, 62),
+        OpenAiServiceHealth.PartialOutage or OpenAiServiceHealth.MajorOutage => Color.FromArgb(255, 102, 102),
+        _ => Color.FromArgb(164, 174, 190)
+    };
+
+    private static Color PaperOpenAiStatusColor(OpenAiServiceHealth status) => status switch
+    {
+        OpenAiServiceHealth.Operational => Color.FromArgb(22, 101, 52),
+        OpenAiServiceHealth.Loading => Color.FromArgb(30, 64, 175),
+        OpenAiServiceHealth.UnderMaintenance or OpenAiServiceHealth.DegradedPerformance => Color.FromArgb(180, 83, 9),
+        OpenAiServiceHealth.PartialOutage or OpenAiServiceHealth.MajorOutage => Color.FromArgb(185, 28, 28),
+        _ => PaperMuted
+    };
+
+    private static void AddOpenAiStatusGraphRow(
+        Control parent,
+        int top,
+        string service,
+        OpenAiServiceHealth health,
+        Color trackColor,
+        Color fillColor,
+        Color serviceColor,
+        Color valueColor,
+        bool monospace = false)
+    {
+        var left = parent.Width switch
+        {
+            ClassicContentWidth => 12,
+            PaperContentWidth => 0,
+            _ => 18
+        };
+        var right = parent.Width switch
+        {
+            ClassicContentWidth => 12,
+            PaperContentWidth => 0,
+            _ => 20
+        };
+        const int serviceWidth = 70;
+        const int graphWidth = 112;
+        const int gap = 10;
+        var serviceLabel = monospace
+            ? CreatePaperLabel(service, 9, FontStyle.Bold, serviceColor, monospace: true)
+            : CreateLabel(service, 9, FontStyle.Bold, serviceColor);
+        serviceLabel.Location = new Point(left, top);
+        serviceLabel.Size = new Size(serviceWidth, 22);
+
+        var graph = new OpenAiStatusGraph(health, trackColor, fillColor)
+        {
+            Location = new Point(left + serviceWidth + gap, top + 4),
+            Size = new Size(graphWidth, 10),
+            AccessibleName = $"{service} {OpenAiStatusClient.DisplayText(health)}"
+        };
+
+        var valueLeft = graph.Right + gap;
+        var valueWidth = Math.Max(60, parent.Width - valueLeft - right);
+        var value = monospace
+            ? CreatePaperLabel(OpenAiStatusClient.DisplayText(health), 8.5f, FontStyle.Bold, valueColor, monospace: true)
+            : CreateLabel(OpenAiStatusClient.DisplayText(health), 8.5f, FontStyle.Bold, valueColor);
+        value.TextAlign = ContentAlignment.TopRight;
+        value.Location = new Point(valueLeft, top);
+        value.Size = new Size(valueWidth, 22);
+        value.AutoEllipsis = true;
+        parent.Controls.AddRange([serviceLabel, graph, value]);
+    }
+
     private static Color ClassicPercentColor(int remainingPercent) =>
         remainingPercent <= 5 ? Color.FromArgb(244, 129, 129) : Color.FromArgb(119, 224, 177);
 
@@ -1145,6 +1336,50 @@ public sealed class UsagePopupForm : Form
     }
 
     private static string FormatNumber(long? value) => value?.ToString("N0", CultureInfo.CurrentCulture) ?? "unavailable";
+}
+
+internal sealed class OpenAiStatusGraph : Control
+{
+    private const int SegmentCount = 4;
+    private readonly OpenAiServiceHealth _health;
+    private readonly Color _trackColor;
+    private readonly Color _fillColor;
+
+    public OpenAiStatusGraph(OpenAiServiceHealth health, Color trackColor, Color fillColor)
+    {
+        _health = health;
+        _trackColor = trackColor;
+        _fillColor = fillColor;
+        TabStop = false;
+        AccessibleRole = AccessibleRole.Graphic;
+        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint, true);
+    }
+
+    protected override void OnPaint(PaintEventArgs eventArgs)
+    {
+        base.OnPaint(eventArgs);
+        eventArgs.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        const int gap = 3;
+        var segmentWidth = Math.Max(1, (ClientSize.Width - (gap * (SegmentCount - 1))) / SegmentCount);
+        var filledSegments = _health switch
+        {
+            OpenAiServiceHealth.Operational => 4,
+            OpenAiServiceHealth.UnderMaintenance or OpenAiServiceHealth.DegradedPerformance => 3,
+            OpenAiServiceHealth.PartialOutage => 2,
+            OpenAiServiceHealth.MajorOutage or OpenAiServiceHealth.Loading => 1,
+            _ => 0
+        };
+
+        for (var index = 0; index < SegmentCount; index++)
+        {
+            var x = index * (segmentWidth + gap);
+            var width = index == SegmentCount - 1 ? ClientSize.Width - x : segmentWidth;
+            var bounds = new Rectangle(x, 0, Math.Max(1, width), Math.Max(1, ClientSize.Height));
+            using var path = RoundedPanel.CreateRoundedRectangle(bounds, Math.Min(3, ClientSize.Height / 2));
+            using var brush = new SolidBrush(index < filledSegments ? _fillColor : _trackColor);
+            eventArgs.Graphics.FillPath(brush, path);
+        }
+    }
 }
 
 public sealed class RoundedPanel : Panel

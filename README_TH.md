@@ -20,6 +20,7 @@ Created by **Pongsathon.T** · [MIT License](LICENSE) · [English](README.md)
 - มี `Usage details` สำหรับดู 7 วัน, 30 วัน, all time, daily chart และทุกโปรเจกต์
 - ใช้ persistent incremental index เพื่ออ่านซ้ำเฉพาะ session file ที่เปลี่ยน
 - adaptive refresh ทุก 1, 2 หรือ 5 นาทีตามการเปลี่ยนแปลง, หน้าต่างที่เปิดอยู่และสถานะไฟ พร้อม manual/notification/resume refresh
+- แสดงสถานะระบบรวมของ Codex และ ChatGPT เป็น segmented health graph จาก public OpenAI Status API
 - ตรวจ public GitHub Releases ได้แบบ manual, notify หรือ automatic install โดยไม่ต้องใช้ GitHub token
 - ตรวจ GitHub asset SHA-256, ป้องกัน ZIP path traversal และตรวจ `SHA256SUMS.txt` ก่อนเปิด Setup
 - ตรวจ response shape ของ rate limits และ token usage เพื่อบันทึก schema drift แบบ sanitized
@@ -42,7 +43,7 @@ pwsh -File .\scripts\build.ps1
 pwsh -File .\scripts\test.ps1
 ```
 
-test project ใช้ package-free runner และไม่เพิ่ม NuGet test framework ผลล่าสุดคือ 68 tests ผ่านทั้งหมด
+test project ใช้ package-free runner และไม่เพิ่ม NuGet test framework ผลล่าสุดคือ 73 tests ผ่านทั้งหมด
 
 ## Run จาก source
 
@@ -55,7 +56,7 @@ dotnet run --project .\src\CodexUsageTray\CodexUsageTray.csproj -c Release
 ## Publish
 
 ```powershell
-pwsh -File .\scripts\publish.ps1 -Version 0.5.0
+pwsh -File .\scripts\publish.ps1 -Version 0.6.0
 ```
 
 ผลลัพธ์:
@@ -99,7 +100,7 @@ uninstall จะเก็บ settings, cache และ logs ใต้ `%LOCALAPP
 ## สร้าง ZIP สำหรับติดตั้งเครื่องอื่น
 
 ```powershell
-pwsh -File .\scripts\package-release.ps1 -Version 0.5.0
+pwsh -File .\scripts\package-release.ps1 -Version 0.6.0
 ```
 
 script จะ publish application ล่าสุดก่อนสร้าง Setup และ ZIP ใช้ `-SkipAppPublish` ได้เมื่อยืนยันแล้วว่า `artifacts\publish\win-x64` เป็น build ที่ต้องการ
@@ -107,7 +108,7 @@ script จะ publish application ล่าสุดก่อนสร้าง 
 ผลลัพธ์:
 
 ```text
-artifacts\release\CodexUsageTray-0.5.0-win-x64.zip
+artifacts\release\CodexUsageTray-0.6.0-win-x64.zip
 ```
 
 ภายใน ZIP มี `CodexUsageTray-Setup.exe`, application payload, `README.txt`, `LICENSE.txt` และ `SHA256SUMS.txt` ผู้ใช้ต้อง extract ทุกไฟล์แล้วดับเบิลคลิก Setup ตัว installer ใช้สิทธิ์ current user, เปิด Start with Windows เป็นค่า default และไม่ต้องติดตั้ง .NET เพิ่ม
@@ -131,7 +132,7 @@ $thumbprint = Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert |
   Where-Object HasPrivateKey |
   Select-Object -First 1 -ExpandProperty Thumbprint
 pwsh -File .\scripts\package-release.ps1 `
-  -Version 0.5.0 `
+  -Version 0.6.0 `
   -CodeSigningThumbprint $thumbprint
 ```
 
@@ -218,6 +219,14 @@ estimated USD =
 - ข้อมูลไม่เปลี่ยน 3 รอบหรือเครื่องใช้แบตเตอรี่: อย่างน้อย 5 นาที
 - app-server notification, manual refresh และ resume จะ refresh ทันที
 - error retry ยังใช้ backoff 2, 5, 10, 30 และ 60 วินาที
+
+## สถานะระบบ OpenAI
+
+popup แสดง segmented current-health graph ของ Codex กับ ChatGPT แยกกัน ส่วนเมนู `OpenAI status` แสดงข้อความสถานะจาก [`status.openai.com`](https://status.openai.com/) โปรแกรมอ่าน public `components.json` ทุก 5 นาทีและเมื่อสั่ง refresh status โดย request ไม่ส่ง account token หรือ `Authorization` header
+
+tray จะแจ้งเมื่อ service ที่เคยปกติเปลี่ยนเป็น maintenance, degraded performance, partial outage หรือ major outage และแจ้งอีกครั้งเมื่อกลับมาปกติ หากเรียก API ไม่ได้หรือ component ที่ต้องใช้หายไป จะแสดง `Unavailable` โดยไม่เปลี่ยนสถานะการเชื่อมต่อ local Codex usage
+
+สถานะนี้เป็นข้อมูลรวมจาก OpenAI ค่า Operational จึงไม่ได้ยืนยันว่าบัญชี, plan, model, feature หรือ region ของผู้ใช้ไม่มีปัญหาเฉพาะจุด
 
 ## Public GitHub updates
 
