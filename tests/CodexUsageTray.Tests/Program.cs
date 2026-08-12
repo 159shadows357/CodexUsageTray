@@ -29,8 +29,10 @@ internal static class Program
         ("reset credits use availableCount", ResetCredits),
         ("reset-credit details preserve null and empty semantics", ResetCreditDetails),
         ("reset-credit consume outcomes are parsed exactly", ResetCreditOutcomes),
-        ("reset-credit mode persists and legacy settings default to off", ResetCreditModeSettings),
+        ("reset-credit settings persist with safe legacy defaults and bounds", ResetCreditModeSettings),
         ("reset-credit automation stages attempts and idempotency keys", ResetCreditAutomationStages),
+        ("reset-credit automation honors a custom lead time and eligible fallbacks", ResetCreditAutomationCustomLeadTime),
+        ("reset-credit timing changes preserve new attempts and pending retries", ResetCreditAutomationTimingChanges),
         ("reset-credit automation reuses a pending key after transport failure", ResetCreditAutomationTransportRetry),
         ("reset-credit automation filters ineligible credits and completes redemption", ResetCreditAutomationEligibility),
         ("usage summary and latest bucket", UsageSummaryLatest),
@@ -679,11 +681,22 @@ internal static class Program
         {
             var store = new JsonStore();
             var path = Path.Combine(root, "settings.json");
-            store.Write(path, new AppSettings { ResetCreditMode = ResetCreditMode.UseBeforeExpiry });
+            store.Write(path, new AppSettings
+            {
+                ResetCreditMode = ResetCreditMode.UseBeforeExpiry,
+                ResetCreditLeadTimeMinutes = 90
+            });
             Equal(ResetCreditMode.UseBeforeExpiry, store.ReadSettings(path).ResetCreditMode);
+            Equal(90, store.ReadSettings(path).ResetCreditLeadTimeMinutes);
 
             File.WriteAllText(path, "{\"refreshIntervalMinutes\":2,\"staleAfterMinutes\":10}");
             Equal(ResetCreditMode.Off, store.ReadSettings(path).ResetCreditMode);
+            Equal(ResetCreditAutomation.DefaultLeadTimeMinutes, store.ReadSettings(path).ResetCreditLeadTimeMinutes);
+
+            File.WriteAllText(path, "{\"resetCreditLeadTimeMinutes\":1}");
+            Equal(ResetCreditAutomation.MinimumLeadTimeMinutes, store.ReadSettings(path).ResetCreditLeadTimeMinutes);
+            File.WriteAllText(path, "{\"resetCreditLeadTimeMinutes\":20000}");
+            Equal(ResetCreditAutomation.MaximumLeadTimeMinutes, store.ReadSettings(path).ResetCreditLeadTimeMinutes);
         });
         return Task.CompletedTask;
     }
@@ -721,6 +734,214 @@ internal static class Program
             Equal(3, fourth.Stage);
             automation.RecordOutcome(fourth, ResetCreditConsumeOutcome.NothingToReset, expires.AddMinutes(-3));
             Equal(ResetCreditActionKind.None, automation.Evaluate([credit], ResetCreditMode.UseBeforeExpiry, expires.AddMinutes(-2)).Action);
+        });
+        return Task.CompletedTask;
+    }
+
+    private static Task ResetCreditAutomationCustomLeadTime()
+    {
+        WithTempDirectory(root =>
+        {
+            var now = new DateTimeOffset(2026, 8, 12, 12, 0, 0, TimeSpan.FromHours(7));
+            var expires = now.AddHours(2);
+            var credit = ResetCredit("credit-custom-window", expires);
+            var automation = new ResetCreditAutomation(Path.Combine(root, "custom.json"), new JsonStore());
+
+            Equal(expires.AddMinutes(-30), automation.NextEvaluationAt(
+                [credit], ResetCreditMode.UseBeforeExpiry, now, 30));
+            Equal(ResetCreditActionKind.None, automation.Evaluate(
+                [credit], ResetCreditMode.UseBeforeExpiry, expires.AddMinutes(-31), 30).Action);
+
+            var first = automation.Evaluate(
+                [credit], ResetCreditMode.UseBeforeExpiry, expires.AddMinutes(-29), 30);
+            Equal(ResetCreditActionKind.Consume, first.Action);
+            Equal(0, first.Stage);
+            False(first.IsFinalStage);
+            automation.RecordOutcome(first, ResetCreditConsumeOutcome.NothingToReset, expires.AddMinutes(-29));
+
+            Equal(ResetCreditActionKind.None, automation.Evaluate(
+                [credit], ResetCreditMode.UseBeforeExpiry, expires.AddMinutes(-20), 30).Action);
+            var fifteenMinuteFallback = automation.Evaluate(
+                [credit], ResetCreditMode.UseBeforeExpiry, expires.AddMinutes(-10), 30);
+            Equal(2, fifteenMinuteFallback.Stage);
+            automation.RecordOutcome(
+                fifteenMinuteFallback,
+                ResetCreditConsumeOutcome.NothingToReset,
+                expires.AddMinutes(-10));
+
+            var finalFallback = automation.Evaluate(
+                [credit], ResetCreditMode.UseBeforeExpiry, expires.AddMinutes(-3), 30);
+            Equal(3, finalFallback.Stage);
+            True(finalFallback.IsFinalStage);
+            automation.RecordOutcome(finalFallback, ResetCreditConsumeOutcome.NothingToReset, expires.AddMinutes(-3));
+            Equal(ResetCreditActionKind.None, automation.Evaluate(
+                [credit], ResetCreditMode.UseBeforeExpiry, expires.AddMinutes(-2), 30).Action);
+            True(automation.NextEvaluationAt(
+                [credit], ResetCreditMode.UseBeforeExpiry, expires.AddMinutes(-2), 30) is null);
+
+            var fiveMinuteAutomation = new ResetCreditAutomation(
+                Path.Combine(root, "five-minute.json"),
+                new JsonStore());
+            var fiveMinuteDecision = fiveMinuteAutomation.Evaluate(
+                [credit], ResetCreditMode.UseBeforeExpiry, expires.AddMinutes(-4), 5);
+            Equal(0, fiveMinuteDecision.Stage);
+            True(fiveMinuteDecision.IsFinalStage);
+
+            var exactHourAutomation = new ResetCreditAutomation(
+                Path.Combine(root, "one-hour.json"),
+                new JsonStore());
+            var exactHourDecision = exactHourAutomation.Evaluate(
+                [credit], ResetCreditMode.UseBeforeExpiry, expires.AddMinutes(-59), 60);
+            Equal(0, exactHourDecision.Stage);
+            exactHourAutomation.RecordOutcome(
+                exactHourDecision,
+                ResetCreditConsumeOutcome.NothingToReset,
+                expires.AddMinutes(-59));
+            var afterExactHour = exactHourAutomation.Evaluate(
+                [credit], ResetCreditMode.UseBeforeExpiry, expires.AddMinutes(-10), 60);
+            Equal(2, afterExactHour.Stage);
+
+            var notification = new ResetCreditAutomation(
+                Path.Combine(root, "notification.json"),
+                new JsonStore());
+            Equal(ResetCreditActionKind.None, notification.Evaluate(
+                [credit], ResetCreditMode.NotifyBeforeExpiry, expires.AddMinutes(-31), 30).Action);
+            Equal(ResetCreditActionKind.Notify, notification.Evaluate(
+                [credit], ResetCreditMode.NotifyBeforeExpiry, expires.AddMinutes(-29), 30).Action);
+            Equal(ResetCreditActionKind.None, notification.Evaluate(
+                [credit], ResetCreditMode.NotifyBeforeExpiry, expires.AddMinutes(-10), 30).Action);
+
+            Equal("30 minutes", ResetCreditTimingDialog.FormatLeadTime(30));
+            Equal("1 day 1 hour 30 minutes", ResetCreditTimingDialog.FormatLeadTime(1530));
+        });
+        return Task.CompletedTask;
+    }
+
+    private static Task ResetCreditAutomationTimingChanges()
+    {
+        WithTempDirectory(root =>
+        {
+            var now = new DateTimeOffset(2026, 8, 12, 12, 0, 0, TimeSpan.FromHours(7));
+            var expires = now.AddHours(6);
+            var credit = ResetCredit("credit-timing-change", expires);
+            var store = new JsonStore();
+            var completedPath = Path.Combine(root, "completed-change.json");
+            var completedAutomation = new ResetCreditAutomation(completedPath, store);
+
+            var sixHourAttempt = completedAutomation.Evaluate(
+                [credit], ResetCreditMode.UseBeforeExpiry, now, 360);
+            Equal(0, sixHourAttempt.Stage);
+            completedAutomation.RecordOutcome(
+                sixHourAttempt,
+                ResetCreditConsumeOutcome.NothingToReset,
+                now);
+
+            var restartedWithFiveMinutes = new ResetCreditAutomation(completedPath, store);
+            var fiveMinuteAttempt = restartedWithFiveMinutes.Evaluate(
+                [credit], ResetCreditMode.UseBeforeExpiry, expires.AddMinutes(-4), 5);
+            Equal(ResetCreditActionKind.Consume, fiveMinuteAttempt.Action);
+            Equal(0, fiveMinuteAttempt.Stage);
+            Equal(5, fiveMinuteAttempt.LeadTimeMinutes);
+            True(fiveMinuteAttempt.IsFinalStage);
+
+            var pendingPath = Path.Combine(root, "pending-change.json");
+            var pendingAutomation = new ResetCreditAutomation(pendingPath, store);
+            var pending = pendingAutomation.Evaluate(
+                [credit], ResetCreditMode.UseBeforeExpiry, now, 360);
+            pendingAutomation.RecordTransportFailure(pending, now);
+            Equal(now.AddMinutes(1), pendingAutomation.NextEvaluationAt(
+                [credit], ResetCreditMode.UseBeforeExpiry, now.AddSeconds(30), 5));
+
+            var restartedPending = new ResetCreditAutomation(pendingPath, store);
+            var retry = restartedPending.Evaluate(
+                [credit], ResetCreditMode.UseBeforeExpiry, now.AddMinutes(1), 5);
+            Equal(ResetCreditActionKind.Consume, retry.Action);
+            Equal(pending.IdempotencyKey, retry.IdempotencyKey);
+            Equal(360, retry.LeadTimeMinutes);
+
+            var nearExpiryCredit = ResetCredit("credit-no-safe-retry", now.AddSeconds(30));
+            var noRetryAutomation = new ResetCreditAutomation(
+                Path.Combine(root, "no-safe-retry.json"),
+                store);
+            var nearExpiryAttempt = noRetryAutomation.Evaluate(
+                [nearExpiryCredit], ResetCreditMode.UseBeforeExpiry, now, 5);
+            noRetryAutomation.RecordTransportFailure(nearExpiryAttempt, now);
+            Equal(ResetCreditActionKind.None, noRetryAutomation.Evaluate(
+                [nearExpiryCredit], ResetCreditMode.UseBeforeExpiry, now.AddSeconds(10), 5).Action);
+
+            var legacyPath = Path.Combine(root, "legacy-state.json");
+            File.WriteAllText(
+                legacyPath,
+                $$"""
+                {
+                  "credits": [
+                    {
+                      "creditKey": "{{ResetCreditAutomation.CreditKey(credit.Id)}}",
+                      "expiresAt": "{{expires:O}}",
+                      "notificationSent": false,
+                      "completed": false,
+                      "lastCompletedStage": 0,
+                      "pendingStage": null,
+                      "idempotencyKey": null,
+                      "retryAt": null
+                    }
+                  ]
+                }
+                """);
+            var migratedLegacy = new ResetCreditAutomation(legacyPath, store);
+            Equal(ResetCreditActionKind.None, migratedLegacy.Evaluate(
+                [credit], ResetCreditMode.UseBeforeExpiry, now, 360).Action);
+            Equal(ResetCreditActionKind.Consume, migratedLegacy.Evaluate(
+                [credit], ResetCreditMode.UseBeforeExpiry, expires.AddMinutes(-4), 5).Action);
+
+            File.WriteAllText(
+                legacyPath,
+                $$"""
+                {
+                  "credits": [
+                    {
+                      "creditKey": "{{ResetCreditAutomation.CreditKey(credit.Id)}}",
+                      "expiresAt": "{{expires:O}}",
+                      "notificationSent": false,
+                      "completed": false,
+                      "lastCompletedStage": 2,
+                      "pendingStage": null,
+                      "idempotencyKey": null,
+                      "retryAt": null
+                    }
+                  ]
+                }
+                """);
+            var legacyFifteen = new ResetCreditAutomation(legacyPath, store);
+            Equal(ResetCreditActionKind.None, legacyFifteen.Evaluate(
+                [credit], ResetCreditMode.UseBeforeExpiry, expires.AddMinutes(-14), 15).Action);
+
+            var canonicalPath = Path.Combine(root, "canonical-window.json");
+            var canonicalAutomation = new ResetCreditAutomation(canonicalPath, store);
+            var customFifteen = canonicalAutomation.Evaluate(
+                [credit], ResetCreditMode.UseBeforeExpiry, expires.AddMinutes(-14), 15);
+            Equal(0, customFifteen.Stage);
+            canonicalAutomation.RecordOutcome(
+                customFifteen,
+                ResetCreditConsumeOutcome.NothingToReset,
+                expires.AddMinutes(-14));
+            Equal(ResetCreditActionKind.None, canonicalAutomation.Evaluate(
+                [credit], ResetCreditMode.UseBeforeExpiry, expires.AddMinutes(-13), 360).Action);
+
+            var fallbackPath = Path.Combine(root, "fallback-to-custom.json");
+            var fallbackAutomation = new ResetCreditAutomation(fallbackPath, store);
+            var sixHour = fallbackAutomation.Evaluate(
+                [credit], ResetCreditMode.UseBeforeExpiry, now, 360);
+            fallbackAutomation.RecordOutcome(sixHour, ResetCreditConsumeOutcome.NothingToReset, now);
+            var fallbackFifteen = fallbackAutomation.Evaluate(
+                [credit], ResetCreditMode.UseBeforeExpiry, expires.AddMinutes(-14), 360);
+            Equal(2, fallbackFifteen.Stage);
+            fallbackAutomation.RecordOutcome(
+                fallbackFifteen,
+                ResetCreditConsumeOutcome.NothingToReset,
+                expires.AddMinutes(-14));
+            Equal(ResetCreditActionKind.None, fallbackAutomation.Evaluate(
+                [credit], ResetCreditMode.UseBeforeExpiry, expires.AddMinutes(-13), 15).Action);
         });
         return Task.CompletedTask;
     }

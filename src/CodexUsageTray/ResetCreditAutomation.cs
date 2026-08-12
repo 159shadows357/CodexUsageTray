@@ -14,7 +14,9 @@ public sealed record ResetCreditAutomationDecision(
     ResetCreditActionKind Action,
     RateLimitResetCredit? Credit = null,
     string? IdempotencyKey = null,
-    int? Stage = null);
+    int? Stage = null,
+    int? LeadTimeMinutes = null,
+    bool IsFinalStage = false);
 
 internal sealed record ResetCreditAttemptState(
     string CreditKey,
@@ -22,7 +24,10 @@ internal sealed record ResetCreditAttemptState(
     bool NotificationSent,
     bool Completed,
     int LastCompletedStage,
+    int? LastCompletedLeadTimeMinutes,
+    int[]? CompletedWindowMinutes,
     int? PendingStage,
+    int? PendingLeadTimeMinutes,
     string? IdempotencyKey,
     DateTimeOffset? RetryAt);
 
@@ -33,12 +38,15 @@ internal sealed record ResetCreditAutomationState
 
 public sealed class ResetCreditAutomation
 {
-    private static readonly TimeSpan[] AttemptWindows =
+    public const int DefaultLeadTimeMinutes = 6 * 60;
+    public const int MinimumLeadTimeMinutes = 5;
+    public const int MaximumLeadTimeMinutes = 7 * 24 * 60;
+
+    private static readonly (int Stage, TimeSpan Window)[] FallbackAttemptWindows =
     [
-        TimeSpan.FromHours(6),
-        TimeSpan.FromHours(1),
-        TimeSpan.FromMinutes(15),
-        TimeSpan.FromMinutes(5)
+        (1, TimeSpan.FromHours(1)),
+        (2, TimeSpan.FromMinutes(15)),
+        (3, TimeSpan.FromMinutes(5))
     ];
     private static readonly TimeSpan TransportRetryDelay = TimeSpan.FromMinutes(1);
 
@@ -56,7 +64,8 @@ public sealed class ResetCreditAutomation
     public ResetCreditAutomationDecision Evaluate(
         IReadOnlyList<RateLimitResetCredit>? credits,
         ResetCreditMode mode,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        int leadTimeMinutes = DefaultLeadTimeMinutes)
     {
         PruneExpiredState(now);
         var available = EligibleCredits(credits, now);
@@ -67,13 +76,39 @@ public sealed class ResetCreditAutomation
 
         var credit = available[0];
         var expiresAt = credit.ExpiresAtLocal!.Value;
-        var stage = EligibleStage(expiresAt - now);
+        var normalizedLeadTime = NormalizeLeadTimeMinutes(leadTimeMinutes);
+        var attemptWindows = CreateAttemptWindows(normalizedLeadTime);
+        var state = FindState(credit);
+        if (mode == ResetCreditMode.UseBeforeExpiry && state?.Completed == true)
+        {
+            return new ResetCreditAutomationDecision(ResetCreditActionKind.None);
+        }
+
+        if (mode == ResetCreditMode.UseBeforeExpiry && state?.PendingStage is not null)
+        {
+            if (state.RetryAt is null || state.RetryAt <= now)
+            {
+                var pendingLeadTime = NormalizeLeadTimeMinutes(
+                    state.PendingLeadTimeMinutes ?? DefaultLeadTimeMinutes);
+                return new ResetCreditAutomationDecision(
+                    ResetCreditActionKind.Consume,
+                    credit,
+                    state.IdempotencyKey,
+                    state.PendingStage,
+                    pendingLeadTime,
+                    IsFinalStage(state.PendingStage.Value, CreateAttemptWindows(pendingLeadTime)));
+            }
+
+            return new ResetCreditAutomationDecision(ResetCreditActionKind.None);
+        }
+
+        var stage = EligibleStage(expiresAt - now, attemptWindows);
         if (stage < 0)
         {
             return new ResetCreditAutomationDecision(ResetCreditActionKind.None);
         }
 
-        var state = GetOrCreateState(credit);
+        state ??= GetOrCreateState(credit);
         if (mode == ResetCreditMode.NotifyBeforeExpiry)
         {
             if (state.NotificationSent)
@@ -91,21 +126,7 @@ public sealed class ResetCreditAutomation
             return new ResetCreditAutomationDecision(ResetCreditActionKind.None);
         }
 
-        if (state.PendingStage is not null)
-        {
-            if (state.RetryAt is null || state.RetryAt <= now)
-            {
-                return new ResetCreditAutomationDecision(
-                    ResetCreditActionKind.Consume,
-                    credit,
-                    state.IdempotencyKey,
-                    state.PendingStage);
-            }
-
-            return new ResetCreditAutomationDecision(ResetCreditActionKind.None);
-        }
-
-        if (stage <= state.LastCompletedStage)
+        if (IsStageCompleted(state, stage, normalizedLeadTime))
         {
             return new ResetCreditAutomationDecision(ResetCreditActionKind.None);
         }
@@ -114,6 +135,7 @@ public sealed class ResetCreditAutomation
         ReplaceState(state with
         {
             PendingStage = stage,
+            PendingLeadTimeMinutes = normalizedLeadTime,
             IdempotencyKey = idempotencyKey,
             RetryAt = null
         });
@@ -122,7 +144,9 @@ public sealed class ResetCreditAutomation
             ResetCreditActionKind.Consume,
             credit,
             idempotencyKey,
-            stage);
+            stage,
+            normalizedLeadTime,
+            IsFinalStage(stage, attemptWindows));
     }
 
     public void RecordOutcome(
@@ -137,15 +161,25 @@ public sealed class ResetCreditAutomation
         }
 
         var completedStage = state.PendingStage ?? state.LastCompletedStage;
+        var completedWindowMinutes = StageWindowMinutes(
+            completedStage,
+            decision.LeadTimeMinutes ?? state.PendingLeadTimeMinutes ?? DefaultLeadTimeMinutes);
         var next = outcome switch
         {
             ResetCreditConsumeOutcome.NothingToReset => state with
             {
                 LastCompletedStage = Math.Max(state.LastCompletedStage, completedStage),
+                LastCompletedLeadTimeMinutes = completedStage == 0
+                    ? decision.LeadTimeMinutes ?? DefaultLeadTimeMinutes
+                    : state.LastCompletedLeadTimeMinutes,
+                CompletedWindowMinutes = AddCompletedWindow(
+                    state.CompletedWindowMinutes,
+                    completedWindowMinutes),
                 PendingStage = null,
+                PendingLeadTimeMinutes = null,
                 IdempotencyKey = null,
                 RetryAt = null,
-                Completed = completedStage >= AttemptWindows.Length - 1
+                Completed = decision.IsFinalStage
             },
             ResetCreditConsumeOutcome.Reset or
             ResetCreditConsumeOutcome.NoCredit or
@@ -153,6 +187,7 @@ public sealed class ResetCreditAutomation
             {
                 Completed = true,
                 PendingStage = null,
+                PendingLeadTimeMinutes = null,
                 IdempotencyKey = null,
                 RetryAt = null
             },
@@ -160,6 +195,7 @@ public sealed class ResetCreditAutomation
             {
                 Completed = true,
                 PendingStage = null,
+                PendingLeadTimeMinutes = null,
                 IdempotencyKey = null,
                 RetryAt = null
             }
@@ -184,7 +220,8 @@ public sealed class ResetCreditAutomation
     public DateTimeOffset? NextEvaluationAt(
         IReadOnlyList<RateLimitResetCredit>? credits,
         ResetCreditMode mode,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        int leadTimeMinutes = DefaultLeadTimeMinutes)
     {
         if (mode == ResetCreditMode.Off)
         {
@@ -203,19 +240,25 @@ public sealed class ResetCreditAutomation
             return null;
         }
 
-        if (state?.PendingStage is not null)
+        if (mode == ResetCreditMode.UseBeforeExpiry && state?.PendingStage is not null)
         {
             return state.RetryAt ?? now;
         }
 
-        var nextStage = Math.Max(0, (state?.LastCompletedStage ?? -1) + 1);
-        var candidates = AttemptWindows
-            .Select((window, stage) => (At: credit.ExpiresAtLocal.Value - window, Stage: stage))
-            .Where(item => item.Stage >= nextStage && item.At > now)
+        var normalizedLeadTime = NormalizeLeadTimeMinutes(leadTimeMinutes);
+        var attemptWindows = CreateAttemptWindows(normalizedLeadTime);
+        var candidates = attemptWindows
+            .Select(item => (At: credit.ExpiresAtLocal.Value - item.Window, item.Stage))
+            .Where(item =>
+                !IsStageCompleted(state, item.Stage, normalizedLeadTime) &&
+                item.At > now)
             .Select(item => item.At)
             .ToList();
         return candidates.Count > 0 ? candidates.Min() : now;
     }
+
+    public static int NormalizeLeadTimeMinutes(int value)
+        => Math.Clamp(value, MinimumLeadTimeMinutes, MaximumLeadTimeMinutes);
 
     internal static string CreditKey(string creditId)
         => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(creditId))).ToLowerInvariant();
@@ -234,18 +277,87 @@ public sealed class ResetCreditAutomation
             .ThenBy(credit => credit.Id, StringComparer.Ordinal)
             .ToList() ?? [];
 
-    private static int EligibleStage(TimeSpan remaining)
+    private static List<(int Stage, TimeSpan Window)> CreateAttemptWindows(int leadTimeMinutes)
     {
-        for (var stage = AttemptWindows.Length - 1; stage >= 0; stage--)
+        var normalized = NormalizeLeadTimeMinutes(leadTimeMinutes);
+        var windows = new List<(int Stage, TimeSpan Window)>
         {
-            if (remaining <= AttemptWindows[stage])
+            (0, TimeSpan.FromMinutes(normalized))
+        };
+        windows.AddRange(FallbackAttemptWindows.Where(item => item.Window.TotalMinutes < normalized));
+        return windows;
+    }
+
+    private static int EligibleStage(
+        TimeSpan remaining,
+        IReadOnlyList<(int Stage, TimeSpan Window)> attemptWindows)
+    {
+        for (var index = attemptWindows.Count - 1; index >= 0; index--)
+        {
+            if (remaining <= attemptWindows[index].Window)
             {
-                return stage;
+                return attemptWindows[index].Stage;
             }
         }
 
         return -1;
     }
+
+    private static bool IsFinalStage(
+        int stage,
+        IReadOnlyList<(int Stage, TimeSpan Window)> attemptWindows)
+        => attemptWindows.All(item => item.Stage <= stage);
+
+    private static bool IsStageCompleted(
+        ResetCreditAttemptState? state,
+        int stage,
+        int leadTimeMinutes)
+    {
+        if (state is null)
+        {
+            return false;
+        }
+
+        var windowMinutes = StageWindowMinutes(stage, leadTimeMinutes);
+        if (state.CompletedWindowMinutes?.Contains(windowMinutes) == true)
+        {
+            return true;
+        }
+
+        if (state.CompletedWindowMinutes is not null)
+        {
+            return false;
+        }
+
+        if (state.LastCompletedStage < 0)
+        {
+            return false;
+        }
+
+        var legacyCompletedWindows = FallbackAttemptWindows
+            .Where(item => item.Stage <= state.LastCompletedStage)
+            .Select(item => (int)item.Window.TotalMinutes)
+            .ToList();
+        if (state.LastCompletedStage >= 0)
+        {
+            legacyCompletedWindows.Add(NormalizeLeadTimeMinutes(
+                state.LastCompletedLeadTimeMinutes ?? DefaultLeadTimeMinutes));
+        }
+
+        return legacyCompletedWindows.Contains(windowMinutes);
+    }
+
+    private static int StageWindowMinutes(int stage, int leadTimeMinutes)
+        => stage == 0
+            ? NormalizeLeadTimeMinutes(leadTimeMinutes)
+            : (int)FallbackAttemptWindows.Single(item => item.Stage == stage).Window.TotalMinutes;
+
+    private static int[] AddCompletedWindow(int[]? completedWindows, int windowMinutes)
+        => (completedWindows ?? [])
+            .Append(windowMinutes)
+            .Distinct()
+            .Order()
+            .ToArray();
 
     private ResetCreditAttemptState GetOrCreateState(RateLimitResetCredit credit)
     {
@@ -262,7 +374,10 @@ public sealed class ResetCreditAutomation
             NotificationSent: false,
             Completed: false,
             LastCompletedStage: -1,
+            LastCompletedLeadTimeMinutes: null,
+            CompletedWindowMinutes: [],
             PendingStage: null,
+            PendingLeadTimeMinutes: null,
             IdempotencyKey: null,
             RetryAt: null);
         _state.Credits.Add(created);

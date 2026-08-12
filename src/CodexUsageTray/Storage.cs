@@ -45,7 +45,9 @@ public sealed class JsonStore
         return settings with
         {
             RefreshIntervalMinutes = Math.Clamp(settings.RefreshIntervalMinutes, 1, 60),
-            StaleAfterMinutes = Math.Clamp(settings.StaleAfterMinutes, 2, 120)
+            StaleAfterMinutes = Math.Clamp(settings.StaleAfterMinutes, 2, 120),
+            ResetCreditLeadTimeMinutes = ResetCreditAutomation.NormalizeLeadTimeMinutes(
+                settings.ResetCreditLeadTimeMinutes)
         };
     }
 

@@ -15,7 +15,7 @@ This personal project is unofficial and is not affiliated with OpenAI.
 - Displays every rate-limit bucket returned by the server.
 - Supports Weekly-only accounts, `rateLimitsByLimitId`, fallback `rateLimits`, `primary`, and `secondary`.
 - Displays reset-credit counts, exact local expiry times, and token activity when the installed Codex version provides them.
-- Provides opt-in reset-credit expiry notification or automatic use during the final 6 hours.
+- Provides opt-in reset-credit expiry notification or automatic use with a configurable lead time (6 hours by default).
 - Displays local token totals and an estimated Standard API-equivalent cost by project.
 - Provides `Usage details` for the last 7 days, last 30 days, all time, daily activity, and every local project.
 - Uses an incremental local index so unchanged Codex session files are not parsed again.
@@ -84,21 +84,21 @@ dotnet run --project .\src\CodexUsageTray\CodexUsageTray.csproj -c Release
 Publish the application:
 
 ```powershell
-pwsh -File .\scripts\publish.ps1 -Version 0.6.0
+pwsh -File .\scripts\publish.ps1 -Version 0.6.1
 ```
 
 Create the installer ZIP:
 
 ```powershell
-pwsh -File .\scripts\package-release.ps1 -Version 0.6.0
+pwsh -File .\scripts\package-release.ps1 -Version 0.6.1
 ```
 
 Output:
 
 ```text
 artifacts\publish\win-x64\CodexUsageTray.exe
-artifacts\release\CodexUsageTray-0.6.0-win-x64.zip
-artifacts\release\CodexUsageTray-0.6.0-win-x64.zip.sha256
+artifacts\release\CodexUsageTray-0.6.1-win-x64.zip
+artifacts\release\CodexUsageTray-0.6.1-win-x64.zip.sha256
 ```
 
 The ZIP contains `CodexUsageTray-Setup.exe`, `CodexUsageTray.exe`, `README.txt`, `LICENSE.txt`, and `SHA256SUMS.txt`.
@@ -112,7 +112,7 @@ $thumbprint = Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert |
   Where-Object HasPrivateKey |
   Select-Object -First 1 -ExpandProperty Thumbprint
 pwsh -File .\scripts\package-release.ps1 `
-  -Version 0.6.0 `
+  -Version 0.6.1 `
   -CodeSigningThumbprint $thumbprint
 ```
 
@@ -144,10 +144,11 @@ The popup displays only the buckets and optional data returned by the server. It
 Open `Reset credits` from the right-click menu:
 
 - `Off`: no notification or automatic use. This is the default.
-- `Notify before expiry`: show one notification when the earliest available credit enters its final 6 hours.
-- `Use before expiry`: attempt to use the earliest available credit during its final 6 hours.
+- `Notify before expiry`: show one notification when the earliest available credit enters the selected expiry window.
+- `Use before expiry`: attempt to use the earliest available credit when it enters the selected expiry window.
+- `Timing: ... before expiry`: set the window from 5 minutes through 7 days using hours and minutes. The default is 6 hours, and changes apply immediately without a restart.
 
-`Use before expiry` requires an explicit confirmation. If there is nothing eligible to reset at the 6-hour attempt, the app tries again at 1 hour, 15 minutes, and 5 minutes before expiry. A transport failure retries with the same idempotency key. A completed `nothingToReset` attempt uses a new key at the next time stage.
+`Use before expiry` requires an explicit confirmation. If there is nothing eligible to reset at the selected-time attempt, the app retries at the 1-hour, 15-minute, and 5-minute marks that occur later than the selected time. For example, a 30-minute setting has 15-minute and 5-minute fallback attempts. A transport failure retries with the same idempotency key. A completed `nothingToReset` attempt uses a new key at the next time stage.
 
 The app acts only on live server detail rows with status `available`, type `codexRateLimits`, a credit ID, and a future expiry timestamp. It never uses cached data for this action. The saved automation state contains a SHA-256 credit key and idempotency UUID, not the raw credit ID. Resume triggers an immediate refresh.
 

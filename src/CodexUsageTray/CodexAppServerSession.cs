@@ -49,7 +49,7 @@ public sealed class CodexAppServerSession : IAsyncDisposable
             "initialize",
             new
             {
-                clientInfo = new { name = "codex_usage_tray", title = "Codex Usage Tray", version = "0.6.0" },
+                clientInfo = new { name = "codex_usage_tray", title = "Codex Usage Tray", version = "0.6.1" },
                 capabilities = new { experimentalApi = true }
             },
             RequestTimeout,

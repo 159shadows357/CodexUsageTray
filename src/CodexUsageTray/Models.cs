@@ -135,6 +135,7 @@ public sealed record AppSettings
     public PopupStyle PopupStyle { get; init; } = PopupStyle.Classic;
     public UpdateMode UpdateMode { get; init; } = UpdateMode.Off;
     public ResetCreditMode ResetCreditMode { get; init; } = ResetCreditMode.Off;
+    public int ResetCreditLeadTimeMinutes { get; init; } = ResetCreditAutomation.DefaultLeadTimeMinutes;
 }
 
 public sealed class JsonRpcException(int code, string message) : Exception(message)

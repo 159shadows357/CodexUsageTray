@@ -45,6 +45,7 @@ public sealed class TrayApplicationContext : ApplicationContext
     private readonly Dictionary<TrayIconStyle, ToolStripMenuItem> _iconStyleItems = new();
     private readonly Dictionary<PopupStyle, ToolStripMenuItem> _popupStyleItems = new();
     private readonly Dictionary<ResetCreditMode, ToolStripMenuItem> _resetCreditModeItems = new();
+    private readonly ToolStripMenuItem _resetCreditLeadTimeItem;
     private readonly Dictionary<UpdateMode, ToolStripMenuItem> _updateModeItems = new();
     private CodexAppServerSession? _session;
     private UsageSnapshot _snapshot;
@@ -160,7 +161,12 @@ public sealed class TrayApplicationContext : ApplicationContext
             _resetCreditModeItems.Add(mode, modeItem);
             resetCreditsMenu.DropDownItems.Add(modeItem);
         }
+        resetCreditsMenu.DropDownItems.Add(new ToolStripSeparator());
+        _resetCreditLeadTimeItem = new ToolStripMenuItem();
+        _resetCreditLeadTimeItem.Click += (_, _) => SetResetCreditLeadTime();
+        resetCreditsMenu.DropDownItems.Add(_resetCreditLeadTimeItem);
         UpdateResetCreditModeChecks();
+        UpdateResetCreditLeadTimeText();
         menu.Items.Add(resetCreditsMenu);
         var updatesMenu = new ToolStripMenuItem("Updates");
         updatesMenu.DropDownItems.Add("Check now", null, async (_, _) => await CheckForUpdatesAsync(interactive: true));
@@ -404,7 +410,8 @@ public sealed class TrayApplicationContext : ApplicationContext
             var nextResetEvaluation = _resetCreditAutomation.NextEvaluationAt(
                 live.ResetCredits,
                 _settings.ResetCreditMode,
-                DateTimeOffset.Now);
+                DateTimeOffset.Now,
+                _settings.ResetCreditLeadTimeMinutes);
             if (nextResetEvaluation is not null && nextResetEvaluation < _nextRefreshAt)
             {
                 _nextRefreshAt = nextResetEvaluation.Value;
@@ -474,7 +481,8 @@ public sealed class TrayApplicationContext : ApplicationContext
             decision = _resetCreditAutomation.Evaluate(
                 live.ResetCredits,
                 _settings.ResetCreditMode,
-                DateTimeOffset.Now);
+                DateTimeOffset.Now,
+                _settings.ResetCreditLeadTimeMinutes);
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
@@ -819,9 +827,11 @@ public sealed class TrayApplicationContext : ApplicationContext
         if (_settings.ResetCreditMode == mode) return;
         if (mode == ResetCreditMode.UseBeforeExpiry)
         {
+            var leadTime = ResetCreditTimingDialog.FormatLeadTime(_settings.ResetCreditLeadTimeMinutes);
             var confirm = MessageBox.Show(
-                "Use before expiry can redeem an earned reset credit automatically during its final 6 hours.\n\n" +
-                "It retries only at the 1-hour, 15-minute, and 5-minute marks when there is nothing to reset. Enable it?",
+                $"Use before expiry can redeem an earned reset credit automatically during its final {leadTime}.\n\n" +
+                "If there is nothing to reset, it retries at the 1-hour, 15-minute, and 5-minute marks " +
+                "that occur after your selected start time. Enable it?",
                 "Automatic reset-credit use",
                 MessageBoxButtons.YesNo,
                 MessageBoxIcon.Warning);
@@ -846,6 +856,40 @@ public sealed class TrayApplicationContext : ApplicationContext
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Error);
         }
+    }
+
+    private void SetResetCreditLeadTime()
+    {
+        using var dialog = new ResetCreditTimingDialog(_settings.ResetCreditLeadTimeMinutes);
+        if (dialog.ShowDialog() != DialogResult.OK ||
+            dialog.LeadTimeMinutes == _settings.ResetCreditLeadTimeMinutes)
+        {
+            return;
+        }
+
+        var nextSettings = _settings with { ResetCreditLeadTimeMinutes = dialog.LeadTimeMinutes };
+        try
+        {
+            _store.Write(_paths.Settings, nextSettings);
+            _settings = nextSettings;
+            UpdateResetCreditLeadTimeText();
+            RequestRefresh();
+            _logger.Info($"Reset credit lead time changed to {dialog.LeadTimeMinutes} minute(s).");
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            MessageBox.Show(
+                SecretSanitizer.Sanitize(error.Message),
+                "Reset-credit timing",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
+        }
+    }
+
+    private void UpdateResetCreditLeadTimeText()
+    {
+        var leadTime = ResetCreditTimingDialog.FormatLeadTime(_settings.ResetCreditLeadTimeMinutes);
+        _resetCreditLeadTimeItem.Text = $"Timing: {leadTime} before expiry...";
     }
 
     private void UpdateResetCreditModeChecks()
@@ -1057,6 +1101,7 @@ public sealed class TrayApplicationContext : ApplicationContext
             Tray icon style: {_settings.TrayIconStyle}
             Popup style: {_settings.PopupStyle}
             Reset credit mode: {_settings.ResetCreditMode}
+            Reset credit lead time: {_settings.ResetCreditLeadTimeMinutes} minute(s)
             Reset credits: {_snapshot.ResetCreditsAvailable?.ToString() ?? "unavailable"}
             Reset credit details: {(_snapshot.ResetCredits is null ? "unavailable" : $"{_snapshot.ResetCredits.Count} row(s)")}
             Next reset credit expiry: {_snapshot.ResetCredits?.Where(credit => credit.ExpiresAtLocal is not null).MinBy(credit => credit.ExpiresAtLocal)?.ExpiresAtLocal?.ToString("O") ?? "unavailable"}
