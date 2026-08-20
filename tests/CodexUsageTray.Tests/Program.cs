@@ -1797,9 +1797,9 @@ internal static class Program
             Status = ConnectionStatus.Connected,
             Buckets =
             [
-                new("codex:primary", "Weekly", "codex", "primary", 9, 91, 10080, now.AddDays(7).ToUnixTimeSeconds(), now.AddDays(7), null),
                 new("codex_bengalfox:primary", "GPT-5.3-Codex-Spark · 5h", "codex_bengalfox", "primary", 46, 54, 300, now.AddHours(5).ToUnixTimeSeconds(), now.AddHours(5), null),
-                new("codex_bengalfox:secondary", "GPT-5.3-Codex-Spark · Weekly", "codex_bengalfox", "secondary", 20, 80, 10080, now.AddDays(7).ToUnixTimeSeconds(), now.AddDays(7), null)
+                new("codex_bengalfox:secondary", "GPT-5.3-Codex-Spark · Weekly", "codex_bengalfox", "secondary", 20, 80, 10080, now.AddDays(7).ToUnixTimeSeconds(), now.AddDays(7), null),
+                new("codex:primary", "Weekly", "codex", "primary", 9, 91, 10080, now.AddDays(7).ToUnixTimeSeconds(), now.AddDays(7), null)
             ]
         };
 
@@ -1821,8 +1821,10 @@ internal static class Program
 
             var topLevel = popup.Controls.OfType<FlowLayoutPanel>().Single().Controls.Cast<Control>().ToList();
             var trayIndex = topLevel.FindIndex(control => control.AccessibleName?.StartsWith("Tray indicator, ", StringComparison.Ordinal) == true);
+            var firstQuotaIndex = topLevel.FindIndex(control => control.AccessibleName?.Contains("% left", StringComparison.Ordinal) == true);
             var statusIndex = topLevel.FindIndex(control => control.AccessibleName?.StartsWith("OpenAI status, ", StringComparison.Ordinal) == true);
-            True(trayIndex >= 0 && statusIndex > trayIndex, $"{style} did not place quota before OpenAI status.");
+            True(trayIndex >= 0 && trayIndex == firstQuotaIndex, $"{style} did not place the Frontier tray bucket first.");
+            True(statusIndex > trayIndex, $"{style} did not place quota before OpenAI status.");
         }
 
         return Task.CompletedTask;

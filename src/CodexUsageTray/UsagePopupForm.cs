@@ -352,7 +352,7 @@ public sealed class UsagePopupForm : Form
         }
         else
         {
-            foreach (var bucket in snapshot.Buckets)
+            foreach (var bucket in PopupBuckets(snapshot))
             {
                 AddClassicBucket(bucket, snapshot.TrayBucket?.Key == bucket.Key);
             }
@@ -534,7 +534,7 @@ public sealed class UsagePopupForm : Form
         }
         else
         {
-            foreach (var bucket in snapshot.Buckets)
+            foreach (var bucket in PopupBuckets(snapshot))
             {
                 AddPaperBucket(bucket, snapshot.TrayBucket?.Key == bucket.Key);
             }
@@ -847,7 +847,7 @@ public sealed class UsagePopupForm : Form
         }
         else
         {
-            foreach (var bucket in snapshot.Buckets)
+            foreach (var bucket in PopupBuckets(snapshot))
             {
                 AddMacBucket(bucket, snapshot.TrayBucket?.Key == bucket.Key, compactBuckets);
             }
@@ -1457,6 +1457,12 @@ public sealed class UsagePopupForm : Form
             sourceName = bucket.LimitId ?? "Rate limit";
         }
         return $"{window} · {sourceName}";
+    }
+
+    private static IEnumerable<RateLimitBucket> PopupBuckets(UsageSnapshot snapshot)
+    {
+        var trayKey = snapshot.TrayBucket?.Key;
+        return snapshot.Buckets.OrderBy(bucket => bucket.Key == trayKey ? 0 : 1);
     }
 
     private static string FormatCompactNumber(long? value)
