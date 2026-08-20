@@ -85,21 +85,21 @@ dotnet run --project .\src\CodexUsageTray\CodexUsageTray.csproj -c Release
 Publish the application:
 
 ```powershell
-pwsh -File .\scripts\publish.ps1 -Version 0.6.3
+pwsh -File .\scripts\publish.ps1 -Version 0.6.4
 ```
 
 Create the installer ZIP:
 
 ```powershell
-pwsh -File .\scripts\package-release.ps1 -Version 0.6.3
+pwsh -File .\scripts\package-release.ps1 -Version 0.6.4
 ```
 
 Output:
 
 ```text
 artifacts\publish\win-x64\CodexUsageTray.exe
-artifacts\release\CodexUsageTray-0.6.3-win-x64.zip
-artifacts\release\CodexUsageTray-0.6.3-win-x64.zip.sha256
+artifacts\release\CodexUsageTray-0.6.4-win-x64.zip
+artifacts\release\CodexUsageTray-0.6.4-win-x64.zip.sha256
 ```
 
 The ZIP contains `CodexUsageTray-Setup.exe`, `CodexUsageTray.exe`, `README.txt`, `LICENSE.txt`, and `SHA256SUMS.txt`.
@@ -113,7 +113,7 @@ $thumbprint = Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert |
   Where-Object HasPrivateKey |
   Select-Object -First 1 -ExpandProperty Thumbprint
 pwsh -File .\scripts\package-release.ps1 `
-  -Version 0.6.3 `
+  -Version 0.6.4 `
   -CodeSigningThumbprint $thumbprint
 ```
 
@@ -139,6 +139,7 @@ Open `Popup style` from the right-click menu:
 - `Paper style`: light paper background, offset shadow, monospace values, and dark progress bars.
 
 The popup displays only the buckets and optional data returned by the server. It does not invent a 5-hour bucket or reset-credit details.
+Every popup style includes `Refresh` and `Close`. You can also close it with `Esc`, an outside click, or a second left-click on the tray icon.
 
 ## Reset credits
 

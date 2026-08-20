@@ -69,6 +69,7 @@ public sealed class TrayApplicationContext : ApplicationContext
     private Version? _lastNotifiedUpdateVersion;
     private bool _updateFeedWarningShown;
     private bool _resetCreditMethodWarningShown;
+    private bool _popupVisibleOnTrayMouseDown;
 
     public TrayApplicationContext(
         SingleInstanceCoordinator singleInstance,
@@ -194,9 +195,20 @@ public sealed class TrayApplicationContext : ApplicationContext
             ContextMenuStrip = menu,
             Visible = true
         };
+        _trayIcon.MouseDown += (_, args) =>
+        {
+            if (args.Button == MouseButtons.Left)
+            {
+                _popupVisibleOnTrayMouseDown = WasPopupVisibleForTrayClick(
+                    _popup.Visible,
+                    DateTimeOffset.Now - _popup.LastHiddenAt);
+            }
+        };
         _trayIcon.MouseClick += (_, args) =>
         {
-            if (args.Button == MouseButtons.Left) QueueControlAction(_popup, OpenUsage);
+            if (args.Button != MouseButtons.Left) return;
+            var wasVisible = _popupVisibleOnTrayMouseDown;
+            QueueControlAction(_popup, () => ApplyTrayPopupClick(wasVisible, OpenUsage, CloseUsagePopup));
         };
         UpdateTray();
         if (showMenuForSmokeTest)
@@ -715,6 +727,15 @@ public sealed class TrayApplicationContext : ApplicationContext
         control.BeginInvoke(action);
     }
 
+    internal static void ApplyTrayPopupClick(bool wasVisibleOnMouseDown, Action open, Action close)
+    {
+        if (wasVisibleOnMouseDown) close();
+        else open();
+    }
+
+    internal static bool WasPopupVisibleForTrayClick(bool visible, TimeSpan hiddenAge) =>
+        visible || hiddenAge < TimeSpan.FromMilliseconds(300);
+
     private void UpdateTooltip()
     {
         _trayIcon.Text = TrayTooltipFormatter.Format(_snapshot);
@@ -730,6 +751,12 @@ public sealed class TrayApplicationContext : ApplicationContext
         _logger.Info("Usage popup opened.");
         _popup.ShowNearTray();
         AccelerateRefreshForVisibleSurface();
+    }
+
+    private void CloseUsagePopup()
+    {
+        _popup.Hide();
+        _logger.Info("Usage popup closed from tray.");
     }
 
     private void OpenUsageDetails()

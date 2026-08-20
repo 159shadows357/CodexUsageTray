@@ -89,7 +89,9 @@ internal static class Program
         ("protocol compatibility reports unknown schema without throwing", ProtocolCompatibilityDrift),
         ("tray context menu uses dark modern renderer", ModernContextMenuStyle),
         ("tray action queue creates a popup handle before BeginInvoke", TrayActionQueueCreatesHandle),
+        ("tray click toggles popup from mouse-down visibility", TrayClickTogglesPopup),
         ("usage popup styles keep scrollbars disabled", UsagePopupHasNoScrollbar),
+        ("usage popup styles expose working refresh and close actions", UsagePopupActions),
         ("mac popup compacts bucket cards on short screens", UsagePopupMacCompactBuckets),
         ("usage popup closes only for an intentional outside pointer action", UsagePopupDeactivatePolicy),
         ("usage popup styles show Codex and ChatGPT service status", UsagePopupShowsOpenAiStatus),
@@ -1714,6 +1716,22 @@ internal static class Program
         return Task.CompletedTask;
     }
 
+    private static Task TrayClickTogglesPopup()
+    {
+        var opens = 0;
+        var closes = 0;
+        TrayApplicationContext.ApplyTrayPopupClick(false, () => opens++, () => closes++);
+        Equal(1, opens);
+        Equal(0, closes);
+        TrayApplicationContext.ApplyTrayPopupClick(true, () => opens++, () => closes++);
+        Equal(1, opens);
+        Equal(1, closes);
+        True(TrayApplicationContext.WasPopupVisibleForTrayClick(true, TimeSpan.FromSeconds(10)));
+        True(TrayApplicationContext.WasPopupVisibleForTrayClick(false, TimeSpan.FromMilliseconds(100)));
+        False(TrayApplicationContext.WasPopupVisibleForTrayClick(false, TimeSpan.FromSeconds(1)));
+        return Task.CompletedTask;
+    }
+
     private static Task UsagePopupHasNoScrollbar()
     {
         var now = new DateTimeOffset(2026, 7, 28, 12, 0, 0, TimeSpan.FromHours(7));
@@ -1749,13 +1767,36 @@ internal static class Program
         var outside = new Point(20, 20);
         var ready = TimeSpan.FromSeconds(1);
 
-        False(UsagePopupForm.ShouldHideOnDeactivate(false, true, false, ready, MouseButtons.Left, bounds, outside));
-        False(UsagePopupForm.ShouldHideOnDeactivate(true, false, false, ready, MouseButtons.Left, bounds, outside));
-        False(UsagePopupForm.ShouldHideOnDeactivate(true, true, true, ready, MouseButtons.Left, bounds, outside));
-        False(UsagePopupForm.ShouldHideOnDeactivate(true, true, false, TimeSpan.FromMilliseconds(200), MouseButtons.Left, bounds, outside));
-        False(UsagePopupForm.ShouldHideOnDeactivate(true, true, false, ready, MouseButtons.None, bounds, outside));
-        False(UsagePopupForm.ShouldHideOnDeactivate(true, true, false, ready, MouseButtons.Left, bounds, inside));
-        True(UsagePopupForm.ShouldHideOnDeactivate(true, true, false, ready, MouseButtons.Left, bounds, outside));
+        False(UsagePopupForm.ShouldHideOnDeactivate(false, true, false, ready, bounds, outside));
+        False(UsagePopupForm.ShouldHideOnDeactivate(true, false, false, ready, bounds, outside));
+        False(UsagePopupForm.ShouldHideOnDeactivate(true, true, true, ready, bounds, outside));
+        False(UsagePopupForm.ShouldHideOnDeactivate(true, true, false, TimeSpan.FromMilliseconds(200), bounds, outside));
+        False(UsagePopupForm.ShouldHideOnDeactivate(true, true, false, ready, bounds, inside));
+        True(UsagePopupForm.ShouldHideOnDeactivate(true, true, false, ready, bounds, outside));
+        return Task.CompletedTask;
+    }
+
+    private static Task UsagePopupActions()
+    {
+        foreach (var style in Enum.GetValues<PopupStyle>())
+        {
+            using var popup = new UsagePopupForm(closeOnDeactivate: false, popupStyle: style);
+            popup.UpdateSnapshot(new UsageSnapshot());
+            var buttons = Descendants(popup).OfType<Button>().ToList();
+            var refresh = buttons.SingleOrDefault(button => button.Text == "Refresh");
+            var close = buttons.SingleOrDefault(button => button.Text == "Close");
+            True(refresh is not null, $"{style} did not expose Refresh.");
+            True(close is not null, $"{style} did not expose Close.");
+
+            var refreshes = 0;
+            popup.RefreshRequested += (_, _) => refreshes++;
+            popup.Opacity = 0;
+            popup.Show();
+            refresh!.PerformClick();
+            Equal(1, refreshes);
+            close!.PerformClick();
+            False(popup.Visible, $"{style} Close did not hide the popup.");
+        }
         return Task.CompletedTask;
     }
 

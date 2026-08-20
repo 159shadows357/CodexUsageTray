@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [ValidatePattern('^[0-9A-Za-z][0-9A-Za-z._-]*$')]
-    [string]$Version = '0.6.3',
+    [string]$Version = '0.6.4',
     [string]$RuntimePackSource = 'https://pkgs.dev.azure.com/dnceng/public/_packaging/dotnet-public/nuget/v3/index.json',
     [string]$CodeSigningThumbprint,
     [string]$TimestampServer = 'http://timestamp.digicert.com',

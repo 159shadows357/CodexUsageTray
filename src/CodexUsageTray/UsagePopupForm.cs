@@ -74,6 +74,8 @@ public sealed class UsagePopupForm : Form
 
     public event EventHandler? RefreshRequested;
 
+    internal DateTimeOffset LastHiddenAt { get; private set; } = DateTimeOffset.MinValue;
+
     public void SetPopupStyle(PopupStyle style)
     {
         if (_popupStyle == style) return;
@@ -170,7 +172,6 @@ public sealed class UsagePopupForm : Form
             Visible,
             ContainsFocus,
             DateTimeOffset.Now - _shownAt,
-            MouseButtons,
             Bounds,
             Cursor.Position))
         {
@@ -178,19 +179,23 @@ public sealed class UsagePopupForm : Form
         }
     }
 
+    protected override void OnVisibleChanged(EventArgs eventArgs)
+    {
+        base.OnVisibleChanged(eventArgs);
+        if (!Visible) LastHiddenAt = DateTimeOffset.Now;
+    }
+
     internal static bool ShouldHideOnDeactivate(
         bool closeOnDeactivate,
         bool visible,
         bool containsFocus,
         TimeSpan shownAge,
-        MouseButtons mouseButtons,
         Rectangle bounds,
         Point cursorPosition) =>
         closeOnDeactivate &&
         visible &&
         !containsFocus &&
         shownAge > TimeSpan.FromMilliseconds(500) &&
-        mouseButtons != MouseButtons.None &&
         !bounds.Contains(cursorPosition);
 
     private void SetRedraw(bool enabled) =>
@@ -378,7 +383,7 @@ public sealed class UsagePopupForm : Form
                 26);
         }
 
-        var showExtendedDetails = CanFitAdditionalContent(260 + (string.IsNullOrWhiteSpace(snapshot.Error) ? 0 : 48));
+        var showExtendedDetails = CanFitAdditionalContent(304 + (string.IsNullOrWhiteSpace(snapshot.Error) ? 0 : 48));
         if (showExtendedDetails && snapshot.TokenActivity.IsAvailable)
         {
             var activity = snapshot.TokenActivity;
@@ -409,6 +414,7 @@ public sealed class UsagePopupForm : Form
         {
             AddClassicLabel(SecretSanitizer.Sanitize(snapshot.Error), 9, FontStyle.Regular, Color.FromArgb(244, 129, 129), 48);
         }
+        AddClassicActions();
     }
 
     private void AddClassicBucket(RateLimitBucket bucket, bool isTrayBucket)
@@ -468,6 +474,38 @@ public sealed class UsagePopupForm : Form
         Height = 1,
         Margin = new Padding(0, 8, 0, 8)
     });
+
+    private void AddClassicActions()
+    {
+        var panel = new Panel
+        {
+            Width = ClassicContentWidth,
+            Height = 38,
+            BackColor = ClassicBackground,
+            Margin = new Padding(0, 4, 0, 0),
+            AccessibleName = "Popup actions"
+        };
+        var refresh = CreateButton(
+            "Refresh",
+            Color.FromArgb(119, 180, 255),
+            ClassicBackground,
+            Color.FromArgb(45, 49, 58),
+            Color.FromArgb(55, 59, 69));
+        refresh.Location = new Point(202, 4);
+        refresh.Size = new Size(78, 30);
+        refresh.Click += (_, _) => RefreshRequested?.Invoke(this, EventArgs.Empty);
+        var close = CreateButton(
+            "Close",
+            Color.FromArgb(213, 218, 226),
+            ClassicBackground,
+            Color.FromArgb(45, 49, 58),
+            Color.FromArgb(55, 59, 69));
+        close.Location = new Point(284, 4);
+        close.Size = new Size(66, 30);
+        close.Click += (_, _) => Hide();
+        panel.Controls.AddRange([refresh, close]);
+        _content.Controls.Add(panel);
+    }
 
     private void AddClassicOpenAiStatus()
     {
@@ -544,6 +582,7 @@ public sealed class UsagePopupForm : Form
         AddPaperOpenAiStatus();
         AddPaperDivider();
         AddPaperCredits(snapshot);
+        AddPaperActions();
         if (CanFitAdditionalContent(300 + (string.IsNullOrWhiteSpace(snapshot.Error) ? 0 : 60)))
         {
             AddPaperDivider();
@@ -551,7 +590,7 @@ public sealed class UsagePopupForm : Form
             AddPaperDivider();
             AddPaperApiEquivalent(snapshot.ApiEquivalent);
         }
-        else
+        else if (CanFitAdditionalContent(54 + (string.IsNullOrWhiteSpace(snapshot.Error) ? 0 : 60)))
         {
             AddPaperDetailsHint();
         }
@@ -819,6 +858,28 @@ public sealed class UsagePopupForm : Form
         label.Margin = new Padding(0, 16, 0, 0);
         label.AutoEllipsis = true;
         _content.Controls.Add(label);
+    }
+
+    private void AddPaperActions()
+    {
+        var panel = new Panel
+        {
+            Width = PaperContentWidth,
+            Height = 40,
+            BackColor = PaperBackground,
+            Margin = new Padding(0, 14, 0, 0),
+            AccessibleName = "Popup actions"
+        };
+        var refresh = CreateButton("Refresh", PaperInk, PaperBackground, PaperTrack, Color.FromArgb(210, 207, 202));
+        refresh.Location = new Point(218, 4);
+        refresh.Size = new Size(78, 31);
+        refresh.Click += (_, _) => RefreshRequested?.Invoke(this, EventArgs.Empty);
+        var close = CreateButton("Close", PaperInk, PaperBackground, PaperTrack, Color.FromArgb(210, 207, 202));
+        close.Location = new Point(302, 4);
+        close.Size = new Size(68, 31);
+        close.Click += (_, _) => Hide();
+        panel.Controls.AddRange([refresh, close]);
+        _content.Controls.Add(panel);
     }
 
     private void AddPaperError(string error)
@@ -1246,22 +1307,28 @@ public sealed class UsagePopupForm : Form
         _content.Controls.Add(footer);
     }
 
-    private static Button CreateButton(string text, Color color)
+    private static Button CreateButton(
+        string text,
+        Color color,
+        Color? background = null,
+        Color? hoverBackground = null,
+        Color? pressedBackground = null)
     {
+        var backColor = background ?? Color.FromArgb(12, 48, 82);
         var font = new Font("Segoe UI", 9, FontStyle.Regular);
         var button = new Button
         {
             Text = text,
             Font = font,
             ForeColor = color,
-            BackColor = Color.FromArgb(12, 48, 82),
+            BackColor = backColor,
             FlatStyle = FlatStyle.Flat,
             Cursor = Cursors.Hand,
             TabStop = true
         };
         button.FlatAppearance.BorderSize = 0;
-        button.FlatAppearance.MouseOverBackColor = Color.FromArgb(24, 67, 104);
-        button.FlatAppearance.MouseDownBackColor = Color.FromArgb(30, 78, 119);
+        button.FlatAppearance.MouseOverBackColor = hoverBackground ?? Color.FromArgb(24, 67, 104);
+        button.FlatAppearance.MouseDownBackColor = pressedBackground ?? Color.FromArgb(30, 78, 119);
         button.Disposed += (_, _) => font.Dispose();
         return button;
     }
