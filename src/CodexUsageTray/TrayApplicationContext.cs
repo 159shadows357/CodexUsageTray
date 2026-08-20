@@ -196,7 +196,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         };
         _trayIcon.MouseClick += (_, args) =>
         {
-            if (args.Button == MouseButtons.Left) OpenUsage();
+            if (args.Button == MouseButtons.Left) _popup.BeginInvoke(OpenUsage);
         };
         UpdateTray();
         if (showMenuForSmokeTest)
@@ -672,15 +672,17 @@ public sealed class TrayApplicationContext : ApplicationContext
 
     private void UpdateTray()
     {
-        var constrained = _snapshot.MostConstrained;
-        var nextVisualKey = new TrayIconVisualKey(_snapshot.Status, constrained?.Key, constrained?.RemainingPercent, _settings.TrayIconStyle);
+        var trayBucket = _snapshot.TrayBucket;
+        var trayStatus = TrayConnectionStatus(_snapshot.Status, trayBucket);
+        var trayRemaining = _snapshot.TrayRemainingPercent;
+        var nextVisualKey = new TrayIconVisualKey(trayStatus, trayBucket?.Key, trayRemaining, _settings.TrayIconStyle);
         if (_iconVisualKey == nextVisualKey)
         {
             UpdateTooltip();
             return;
         }
 
-        var nextIcon = TrayIconRenderer.Create(_snapshot.Status, constrained?.RemainingPercent, _settings.TrayIconStyle);
+        var nextIcon = TrayIconRenderer.Create(trayStatus, trayRemaining, _settings.TrayIconStyle);
         try
         {
             _trayIcon.Icon = nextIcon;
@@ -698,6 +700,13 @@ public sealed class TrayApplicationContext : ApplicationContext
 
         UpdateTooltip();
     }
+
+    internal static ConnectionStatus TrayConnectionStatus(ConnectionStatus snapshotStatus, RateLimitBucket? trayBucket) =>
+        snapshotStatus == ConnectionStatus.RateLimitReached
+            ? trayBucket is not null && UsageSnapshot.EffectiveRemainingPercent(trayBucket) == 0
+                ? ConnectionStatus.RateLimitReached
+                : ConnectionStatus.Connected
+            : snapshotStatus;
 
     private void UpdateTooltip()
     {
@@ -784,7 +793,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         TrayIconStyle.Ring => "Ring",
         TrayIconStyle.SolidBar => "Solid bar",
         TrayIconStyle.SegmentedBar => "Segmented bar",
-        TrayIconStyle.CodexPercent => "Number only",
+        TrayIconStyle.CodexPercent => "Number only (Frontier)",
         _ => style.ToString()
     };
 

@@ -1,11 +1,17 @@
 using System.ComponentModel;
 using System.Drawing.Drawing2D;
 using System.Globalization;
+using System.Runtime.InteropServices;
 
 namespace CodexUsageTray;
 
 public sealed class UsagePopupForm : Form
 {
+    private const int WmSetRedraw = 0x000B;
+    private const uint RdwInvalidate = 0x0001;
+    private const uint RdwErase = 0x0004;
+    private const uint RdwAllChildren = 0x0080;
+    private const uint RdwUpdateNow = 0x0100;
     private const int ClassicContentWidth = 350;
     private const int MacContentWidth = 374;
     private const int PaperContentWidth = 370;
@@ -60,10 +66,6 @@ public sealed class UsagePopupForm : Form
         Controls.Add(_content);
         ApplyVisualStyle();
 
-        Deactivate += (_, _) =>
-        {
-            if (_closeOnDeactivate && DateTimeOffset.Now - _shownAt > TimeSpan.FromMilliseconds(500)) Hide();
-        };
         KeyDown += (_, args) =>
         {
             if (args.KeyCode == Keys.Escape) Hide();
@@ -87,37 +89,62 @@ public sealed class UsagePopupForm : Form
     public void UpdateSnapshot(UsageSnapshot snapshot)
     {
         _snapshot = snapshot;
-        SuspendLayout();
-        _content.SuspendLayout();
-        ClearContent();
-        ApplyVisualStyle();
+        var suppressRedraw = Visible && IsHandleCreated;
+        if (suppressRedraw) SetRedraw(false);
+        try
+        {
+            SuspendLayout();
+            _content.SuspendLayout();
+            try
+            {
+                ClearContent();
+                ApplyVisualStyle();
 
-        if (_popupStyle == PopupStyle.MacOS)
-        {
-            RenderMacStyle(snapshot);
-        }
-        else if (_popupStyle == PopupStyle.Paper)
-        {
-            RenderPaperStyle(snapshot);
-        }
-        else
-        {
-            RenderClassicStyle(snapshot);
-        }
+                if (_popupStyle == PopupStyle.MacOS)
+                {
+                    RenderMacStyle(snapshot);
+                }
+                else if (_popupStyle == PopupStyle.Paper)
+                {
+                    RenderPaperStyle(snapshot);
+                }
+                else
+                {
+                    RenderClassicStyle(snapshot);
+                }
+            }
+            finally
+            {
+                _content.ResumeLayout(true);
+                ResumeLayout(true);
+            }
 
-        _content.ResumeLayout(true);
-        ResumeLayout(true);
-        if (_popupStyle == PopupStyle.MacOS)
-        {
-            FitMacWindowToContent();
+            if (_popupStyle == PopupStyle.MacOS)
+            {
+                FitMacWindowToContent();
+            }
+            else if (_popupStyle == PopupStyle.Paper)
+            {
+                FitPaperWindowToContent();
+            }
+            else
+            {
+                FitClassicWindowToContent();
+            }
+
+            if (Visible) PositionNearTray();
         }
-        else if (_popupStyle == PopupStyle.Paper)
+        finally
         {
-            FitPaperWindowToContent();
-        }
-        else
-        {
-            FitClassicWindowToContent();
+            if (suppressRedraw && IsHandleCreated)
+            {
+                SetRedraw(true);
+                RedrawWindow(
+                    Handle,
+                    IntPtr.Zero,
+                    IntPtr.Zero,
+                    RdwInvalidate | RdwErase | RdwAllChildren | RdwUpdateNow);
+            }
         }
     }
 
@@ -129,12 +156,52 @@ public sealed class UsagePopupForm : Form
 
     public void ShowNearTray()
     {
-        UpdateSnapshot(_snapshot);
         PositionNearTray();
         _shownAt = DateTimeOffset.Now;
         Show();
         Activate();
     }
+
+    protected override void OnDeactivate(EventArgs eventArgs)
+    {
+        base.OnDeactivate(eventArgs);
+        if (ShouldHideOnDeactivate(
+            _closeOnDeactivate,
+            Visible,
+            ContainsFocus,
+            DateTimeOffset.Now - _shownAt,
+            MouseButtons,
+            Bounds,
+            Cursor.Position))
+        {
+            Hide();
+        }
+    }
+
+    internal static bool ShouldHideOnDeactivate(
+        bool closeOnDeactivate,
+        bool visible,
+        bool containsFocus,
+        TimeSpan shownAge,
+        MouseButtons mouseButtons,
+        Rectangle bounds,
+        Point cursorPosition) =>
+        closeOnDeactivate &&
+        visible &&
+        !containsFocus &&
+        shownAge > TimeSpan.FromMilliseconds(500) &&
+        mouseButtons != MouseButtons.None &&
+        !bounds.Contains(cursorPosition);
+
+    private void SetRedraw(bool enabled) =>
+        SendMessage(Handle, WmSetRedraw, enabled ? new IntPtr(1) : IntPtr.Zero, IntPtr.Zero);
+
+    [DllImport("user32.dll", EntryPoint = "SendMessageW")]
+    private static extern IntPtr SendMessage(IntPtr window, int message, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool RedrawWindow(IntPtr window, IntPtr updateRectangle, IntPtr updateRegion, uint flags);
 
     protected override void OnPaint(PaintEventArgs e)
     {
@@ -250,6 +317,16 @@ public sealed class UsagePopupForm : Form
         Location = new Point(x, y);
     }
 
+    private bool CanFitAdditionalContent(int additionalHeight)
+    {
+        var contentHeight = _content.Controls.Cast<Control>()
+            .Sum(control => control.Height + control.Margin.Vertical);
+        var screen = Visible ? Screen.FromControl(this) : Screen.FromPoint(Cursor.Position);
+        var maxHeight = Math.Max(360, screen.WorkingArea.Height - 16);
+        var insets = Padding.Vertical + (_popupStyle == PopupStyle.Paper ? _content.Padding.Vertical : 2);
+        return contentHeight + additionalHeight + insets <= maxHeight;
+    }
+
     private void ClearContent()
     {
         while (_content.Controls.Count > 0)
@@ -268,7 +345,6 @@ public sealed class UsagePopupForm : Form
             AddClassicLabel($"Plan: {snapshot.PlanType}", 9, FontStyle.Regular, Color.FromArgb(164, 174, 190), 25);
         }
         AddClassicLabel(StatusText(snapshot.Status), 10, FontStyle.Bold, StatusColor(snapshot.Status), 30);
-        AddClassicOpenAiStatus();
 
         if (snapshot.Buckets.Count == 0)
         {
@@ -278,10 +354,12 @@ public sealed class UsagePopupForm : Form
         {
             foreach (var bucket in snapshot.Buckets)
             {
-                AddClassicBucket(bucket);
+                AddClassicBucket(bucket, snapshot.TrayBucket?.Key == bucket.Key);
             }
         }
 
+        AddClassicSeparator();
+        AddClassicOpenAiStatus();
         AddClassicSeparator();
         AddClassicLabel(
             snapshot.ResetCreditsAvailable is null ? "Reset credits: unavailable" : $"Reset credits: {snapshot.ResetCreditsAvailable}",
@@ -300,7 +378,8 @@ public sealed class UsagePopupForm : Form
                 26);
         }
 
-        if (snapshot.TokenActivity.IsAvailable)
+        var showExtendedDetails = CanFitAdditionalContent(260 + (string.IsNullOrWhiteSpace(snapshot.Error) ? 0 : 48));
+        if (showExtendedDetails && snapshot.TokenActivity.IsAvailable)
         {
             var activity = snapshot.TokenActivity;
             var latestLabel = activity.TodayOrLatestTokens is null
@@ -310,43 +389,53 @@ public sealed class UsagePopupForm : Form
             AddClassicLabel($"Lifetime tokens: {FormatNumber(activity.LifetimeTokens)}", 10, FontStyle.Regular, Color.FromArgb(213, 218, 226), 26);
             AddClassicLabel($"Peak daily tokens: {FormatNumber(activity.PeakDailyTokens)}", 10, FontStyle.Regular, Color.FromArgb(213, 218, 226), 26);
         }
-        else
+        else if (showExtendedDetails)
         {
             AddClassicLabel("Token activity unavailable", 10, FontStyle.Regular, Color.FromArgb(164, 174, 190), 28);
         }
 
+        if (showExtendedDetails)
+        {
+            AddClassicSeparator();
+            AddClassicApiEquivalent(snapshot.ApiEquivalent);
+        }
+        else
+        {
+            AddClassicLabel("Token and API details: Usage details", 9, FontStyle.Regular, Color.FromArgb(164, 174, 190), 28);
+        }
         AddClassicSeparator();
-        AddClassicApiEquivalent(snapshot.ApiEquivalent);
-        AddClassicSeparator();
-        AddClassicLabel($"Last updated: {snapshot.UpdatedAt.ToLocalTime():MMM d, yyyy HH:mm:ss}", 9, FontStyle.Regular, Color.FromArgb(164, 174, 190), 24);
+        AddClassicLabel($"Quota updated {snapshot.UpdatedAt.ToLocalTime():MMM d, yyyy HH:mm:ss}", 9, FontStyle.Regular, Color.FromArgb(164, 174, 190), 24);
         if (!string.IsNullOrWhiteSpace(snapshot.Error))
         {
             AddClassicLabel(SecretSanitizer.Sanitize(snapshot.Error), 9, FontStyle.Regular, Color.FromArgb(244, 129, 129), 48);
         }
     }
 
-    private void AddClassicBucket(RateLimitBucket bucket)
+    private void AddClassicBucket(RateLimitBucket bucket, bool isTrayBucket)
     {
+        var displayName = FormatBucketDisplayName(bucket, isTrayBucket);
+        var remainingPercent = isTrayBucket ? UsageSnapshot.EffectiveRemainingPercent(bucket) : bucket.RemainingPercent;
         var panel = new Panel
         {
             Width = ClassicContentWidth,
             Height = 92,
             Margin = new Padding(0, 4, 0, 4),
             BackColor = Color.FromArgb(31, 34, 41),
-            AccessibleName = $"{bucket.Name}, {bucket.RemainingPercent}% left"
+            AccessibleName = $"{(isTrayBucket ? "Tray indicator, " : string.Empty)}{displayName}, {remainingPercent}% left"
         };
-        var title = CreateLabel(bucket.Name, 10, FontStyle.Bold, Color.White);
+        var title = CreateLabel(displayName, 10, FontStyle.Bold, Color.White);
         title.Location = new Point(12, 9);
-        title.Size = new Size(215, 24);
+        title.Size = new Size(235, 24);
+        title.AutoEllipsis = true;
 
-        var percent = CreateLabel($"{bucket.RemainingPercent}% left", 10, FontStyle.Bold, ClassicPercentColor(bucket.RemainingPercent));
+        var percent = CreateLabel($"{remainingPercent}% left", 10, FontStyle.Bold, ClassicPercentColor(remainingPercent));
         percent.TextAlign = ContentAlignment.TopRight;
-        percent.Location = new Point(225, 9);
-        percent.Size = new Size(112, 24);
+        percent.Location = new Point(245, 9);
+        percent.Size = new Size(92, 24);
 
         var progress = new UsageProgressBar
         {
-            Value = bucket.RemainingPercent,
+            Value = remainingPercent,
             Location = new Point(12, 39),
             Size = new Size(325, 8)
         };
@@ -391,7 +480,7 @@ public sealed class UsagePopupForm : Form
             AccessibleName = $"OpenAI status, Codex {OpenAiStatusClient.DisplayText(_openAiStatus.Codex)}, " +
                 $"ChatGPT {OpenAiStatusClient.DisplayText(_openAiStatus.ChatGpt)}"
         };
-        var title = CreateLabel("OpenAI status", 9, FontStyle.Bold, Color.FromArgb(190, 197, 209));
+        var title = CreateLabel(OpenAiStatusHeading(), 9, FontStyle.Bold, Color.FromArgb(190, 197, 209));
         title.Location = new Point(12, 5);
         title.Size = new Size(326, 20);
         AddOpenAiStatusGraphRow(
@@ -431,23 +520,13 @@ public sealed class UsagePopupForm : Form
             Color.FromArgb(119, 224, 177),
             28);
         AddClassicLabel($"Local history: {FormatCompactNumber(estimate.TotalTokens)} tokens", 9.5f, FontStyle.Regular, Color.FromArgb(213, 218, 226), 26);
-        foreach (var project in estimate.Projects.Take(3))
-        {
-            AddClassicLabel(
-                $"{project.Name}: {FormatCompactNumber(project.TotalTokens)} · {FormatEstimatedUsd(project.EstimatedUsd, project.UnpricedTokens)}",
-                9,
-                FontStyle.Regular,
-                Color.FromArgb(190, 197, 209),
-                25);
-        }
-        AddClassicLabel(FormatApiEstimateNote(estimate, Math.Min(3, estimate.Projects.Count)), 8.5f, FontStyle.Regular, Color.FromArgb(164, 174, 190), 25);
+        AddClassicLabel("Project breakdown: Usage details", 9, FontStyle.Regular, Color.FromArgb(190, 197, 209), 25);
+        AddClassicLabel(FormatApiEstimateNote(estimate, 0), 8.5f, FontStyle.Regular, Color.FromArgb(164, 174, 190), 25);
     }
 
     private void RenderPaperStyle(UsageSnapshot snapshot)
     {
         AddPaperHeader(snapshot);
-        AddPaperOpenAiStatus();
-        AddPaperDivider();
 
         if (snapshot.Buckets.Count == 0)
         {
@@ -457,16 +536,25 @@ public sealed class UsagePopupForm : Form
         {
             foreach (var bucket in snapshot.Buckets)
             {
-                AddPaperBucket(bucket);
+                AddPaperBucket(bucket, snapshot.TrayBucket?.Key == bucket.Key);
             }
         }
 
         AddPaperDivider();
+        AddPaperOpenAiStatus();
+        AddPaperDivider();
         AddPaperCredits(snapshot);
-        AddPaperDivider();
-        AddPaperTokenActivity(snapshot.TokenActivity);
-        AddPaperDivider();
-        AddPaperApiEquivalent(snapshot.ApiEquivalent);
+        if (CanFitAdditionalContent(300 + (string.IsNullOrWhiteSpace(snapshot.Error) ? 0 : 60)))
+        {
+            AddPaperDivider();
+            AddPaperTokenActivity(snapshot.TokenActivity);
+            AddPaperDivider();
+            AddPaperApiEquivalent(snapshot.ApiEquivalent);
+        }
+        else
+        {
+            AddPaperDetailsHint();
+        }
 
         if (!string.IsNullOrWhiteSpace(snapshot.Error))
         {
@@ -493,7 +581,7 @@ public sealed class UsagePopupForm : Form
         plan.Size = new Size(202, 27);
         plan.AutoEllipsis = true;
 
-        var updated = CreatePaperLabel($"Updated {FormatUpdatedAge(snapshot.UpdatedAt)}", 10, FontStyle.Regular, PaperMuted);
+        var updated = CreatePaperLabel($"Quota updated {FormatUpdatedAge(snapshot.UpdatedAt)}", 10, FontStyle.Regular, PaperMuted);
         updated.Location = new Point(0, 38);
         updated.Size = new Size(230, 28);
 
@@ -507,29 +595,31 @@ public sealed class UsagePopupForm : Form
         _content.Controls.Add(header);
     }
 
-    private void AddPaperBucket(RateLimitBucket bucket)
+    private void AddPaperBucket(RateLimitBucket bucket, bool isTrayBucket)
     {
+        var displayName = FormatBucketDisplayName(bucket, isTrayBucket);
+        var remainingPercent = isTrayBucket ? UsageSnapshot.EffectiveRemainingPercent(bucket) : bucket.RemainingPercent;
         var panel = new Panel
         {
             Width = PaperContentWidth,
             Height = 88,
             BackColor = PaperBackground,
             Margin = new Padding(0, 0, 0, 18),
-            AccessibleName = $"{bucket.Name}, {bucket.RemainingPercent}% left"
+            AccessibleName = $"{(isTrayBucket ? "Tray indicator, " : string.Empty)}{displayName}, {remainingPercent}% left"
         };
-        var title = CreatePaperLabel(bucket.Name, 11.5f, FontStyle.Bold, PaperInk, monospace: true);
+        var title = CreatePaperLabel(displayName, 11.5f, FontStyle.Bold, PaperInk, monospace: true);
         title.Location = new Point(0, 0);
-        title.Size = new Size(218, 28);
+        title.Size = new Size(238, 28);
         title.AutoEllipsis = true;
 
-        var percent = CreatePaperLabel($"{bucket.RemainingPercent}% left", 11.5f, FontStyle.Bold, PaperInk, monospace: true);
+        var percent = CreatePaperLabel($"{remainingPercent}% left", 11.5f, FontStyle.Bold, PaperInk, monospace: true);
         percent.TextAlign = ContentAlignment.TopRight;
-        percent.Location = new Point(218, 0);
-        percent.Size = new Size(152, 28);
+        percent.Location = new Point(238, 0);
+        percent.Size = new Size(132, 28);
 
         var progress = new UsageProgressBar
         {
-            Value = bucket.RemainingPercent,
+            Value = remainingPercent,
             Location = new Point(0, 36),
             Size = new Size(PaperContentWidth, 9),
             TrackColor = PaperTrack,
@@ -575,7 +665,7 @@ public sealed class UsagePopupForm : Form
             AccessibleName = $"OpenAI status, Codex {OpenAiStatusClient.DisplayText(_openAiStatus.Codex)}, " +
                 $"ChatGPT {OpenAiStatusClient.DisplayText(_openAiStatus.ChatGpt)}"
         };
-        var title = CreatePaperLabel("OpenAI Status", 10, FontStyle.Bold, PaperInk, monospace: true);
+        var title = CreatePaperLabel(OpenAiStatusHeading(), 10, FontStyle.Bold, PaperInk, monospace: true);
         title.Location = new Point(0, 0);
         title.Size = new Size(PaperContentWidth, 24);
         AddOpenAiStatusGraphRow(
@@ -683,8 +773,7 @@ public sealed class UsagePopupForm : Form
 
     private void AddPaperApiEquivalent(ApiEquivalentEstimate estimate)
     {
-        var displayedProjects = estimate.Projects.Take(3).ToList();
-        var rowCount = estimate.IsAvailable ? 2 + displayedProjects.Count : 1;
+        var rowCount = estimate.IsAvailable ? 3 : 1;
         var noteTop = 36 + (rowCount * 25);
         var panel = new Panel
         {
@@ -703,16 +792,7 @@ public sealed class UsagePopupForm : Form
         {
             AddPaperValueRow(panel, 36, "Estimated cost", FormatEstimatedUsd(estimate.EstimatedUsd, estimate.UnpricedTokens));
             AddPaperValueRow(panel, 61, "Local history", $"{FormatCompactNumber(estimate.TotalTokens)} tok");
-            var top = 86;
-            foreach (var project in displayedProjects)
-            {
-                AddPaperValueRow(
-                    panel,
-                    top,
-                    $"{project.Name} · {FormatCompactNumber(project.TotalTokens)}",
-                    FormatEstimatedUsd(project.EstimatedUsd, project.UnpricedTokens));
-                top += 25;
-            }
+            AddPaperValueRow(panel, 86, "Projects", "Usage details");
         }
         else
         {
@@ -720,7 +800,7 @@ public sealed class UsagePopupForm : Form
         }
 
         var note = CreatePaperLabel(
-            estimate.IsAvailable ? FormatApiEstimateNote(estimate, displayedProjects.Count) : "No local Codex token history found",
+            estimate.IsAvailable ? FormatApiEstimateNote(estimate, 0) : "No local Codex token history found",
             8.5f,
             FontStyle.Regular,
             PaperMuted);
@@ -729,6 +809,16 @@ public sealed class UsagePopupForm : Form
         note.AutoEllipsis = true;
         panel.Controls.Add(note);
         _content.Controls.Add(panel);
+    }
+
+    private void AddPaperDetailsHint()
+    {
+        var label = CreatePaperLabel("Token and API details are available in Usage details", 9, FontStyle.Regular, PaperMuted);
+        label.Width = PaperContentWidth;
+        label.Height = 38;
+        label.Margin = new Padding(0, 16, 0, 0);
+        label.AutoEllipsis = true;
+        _content.Controls.Add(label);
     }
 
     private void AddPaperError(string error)
@@ -745,7 +835,11 @@ public sealed class UsagePopupForm : Form
     {
         AddMacHeader(snapshot.PlanType);
         AddMacStatusRow(snapshot);
-        AddMacOpenAiStatusCard();
+        var screen = Visible ? Screen.FromControl(this) : Screen.FromPoint(Cursor.Position);
+        var compactBuckets = ShouldUseCompactMacBuckets(
+            screen.WorkingArea.Height,
+            snapshot.Buckets.Count,
+            !string.IsNullOrWhiteSpace(snapshot.Error));
 
         if (snapshot.Buckets.Count == 0)
         {
@@ -755,13 +849,24 @@ public sealed class UsagePopupForm : Form
         {
             foreach (var bucket in snapshot.Buckets)
             {
-                AddMacBucket(bucket);
+                AddMacBucket(bucket, snapshot.TrayBucket?.Key == bucket.Key, compactBuckets);
             }
         }
 
+        if (!compactBuckets || string.IsNullOrWhiteSpace(snapshot.Error))
+        {
+            AddMacOpenAiStatusCard();
+        }
         AddMacAccountCard(snapshot);
-        AddMacTokenCard(snapshot.TokenActivity);
-        AddMacApiEquivalentCard(snapshot.ApiEquivalent);
+        if (CanFitAdditionalContent(420 + (string.IsNullOrWhiteSpace(snapshot.Error) ? 0 : 80)))
+        {
+            AddMacTokenCard(snapshot.TokenActivity);
+            AddMacApiEquivalentCard(snapshot.ApiEquivalent);
+        }
+        else
+        {
+            AddMacDetailsHint();
+        }
 
         if (!string.IsNullOrWhiteSpace(snapshot.Error))
         {
@@ -838,7 +943,7 @@ public sealed class UsagePopupForm : Form
             AccessibleName = $"OpenAI status, Codex {OpenAiStatusClient.DisplayText(_openAiStatus.Codex)}, " +
                 $"ChatGPT {OpenAiStatusClient.DisplayText(_openAiStatus.ChatGpt)}"
         };
-        var title = CreateLabel("OpenAI status", 9, FontStyle.Bold, MacMuted);
+        var title = CreateLabel(OpenAiStatusHeading(), 9, FontStyle.Bold, MacMuted);
         title.Location = new Point(18, 8);
         title.Size = new Size(336, 20);
         AddOpenAiStatusGraphRow(
@@ -863,41 +968,48 @@ public sealed class UsagePopupForm : Form
         _content.Controls.Add(card);
     }
 
-    private void AddMacBucket(RateLimitBucket bucket)
+    private void AddMacBucket(RateLimitBucket bucket, bool isTrayBucket, bool compact)
     {
-        var accent = MacAccentColor(bucket.RemainingPercent);
+        var displayName = FormatBucketDisplayName(bucket, isTrayBucket);
+        var remainingPercent = isTrayBucket ? UsageSnapshot.EffectiveRemainingPercent(bucket) : bucket.RemainingPercent;
+        var accent = MacAccentColor(remainingPercent);
         var card = new RoundedPanel
         {
             Width = MacContentWidth,
-            Height = 116,
+            Height = compact ? 82 : 116,
             Radius = 18,
             BackColor = MacCard,
             Margin = new Padding(0, 0, 0, 10),
-            AccessibleName = $"{bucket.Name}, {bucket.RemainingPercent}% left"
+            AccessibleName = $"{(isTrayBucket ? "Tray indicator, " : string.Empty)}{displayName}, {remainingPercent}% left"
         };
-        var title = CreateLabel(bucket.Name, 11, FontStyle.Bold, MacText);
+        var title = CreateLabel(displayName, 11, FontStyle.Bold, MacText);
         title.Location = new Point(18, 15);
-        title.Size = new Size(232, 26);
+        title.Size = new Size(245, 26);
         title.AutoEllipsis = true;
 
-        var percent = CreateLabel($"{bucket.RemainingPercent}%", 12, FontStyle.Bold, accent);
+        var percent = CreateLabel($"{remainingPercent}%", 12, FontStyle.Bold, accent);
         percent.TextAlign = ContentAlignment.TopRight;
-        percent.Location = new Point(252, 13);
-        percent.Size = new Size(102, 28);
+        percent.Location = new Point(265, 13);
+        percent.Size = new Size(89, 28);
 
         var progress = new UsageProgressBar
         {
-            Value = bucket.RemainingPercent,
-            Location = new Point(18, 49),
+            Value = remainingPercent,
+            Location = new Point(18, compact ? 42 : 49),
             Size = new Size(336, 10),
             TrackColor = Color.FromArgb(70, 94, 115),
             FillColor = accent,
             Rounded = true
         };
 
-        var resetsIn = CreateLabel($"Resets in: {FormatResetRemaining(bucket.ResetsAtLocal)}", 9, FontStyle.Bold, MacMuted);
-        resetsIn.Location = new Point(18, 73);
-        resetsIn.Size = new Size(180, 26);
+        var resetsIn = CreateLabel(
+            compact ? $"Reset {FormatResetRemaining(bucket.ResetsAtLocal)}" : $"Resets in: {FormatResetRemaining(bucket.ResetsAtLocal)}",
+            9,
+            FontStyle.Bold,
+            MacMuted);
+        resetsIn.Location = new Point(18, compact ? 60 : 73);
+        resetsIn.Size = new Size(compact ? 336 : 180, compact ? 18 : 26);
+        resetsIn.AutoEllipsis = true;
         var resetAt = CreateLabel(
             bucket.ResetsAtLocal is null ? "Reset unavailable" : bucket.ResetsAtLocal.Value.ToString("MMM d HH:mm"),
             9,
@@ -907,8 +1019,20 @@ public sealed class UsagePopupForm : Form
         resetAt.Location = new Point(198, 73);
         resetAt.Size = new Size(156, 26);
 
-        card.Controls.AddRange([title, percent, progress, resetsIn, resetAt]);
+        card.Controls.AddRange(compact
+            ? [title, percent, progress, resetsIn]
+            : [title, percent, progress, resetsIn, resetAt]);
         _content.Controls.Add(card);
+    }
+
+    internal static bool ShouldUseCompactMacBuckets(int workingAreaHeight, int bucketCount, bool hasError)
+    {
+        const int fixedContentHeight = 100 + 98 + 126 + 54 + 66 + 32;
+        const int fullBucketHeight = 126;
+        const int errorHeight = 80;
+        var maximumHeight = Math.Max(360, workingAreaHeight - 16);
+        var desiredHeight = fixedContentHeight + (Math.Max(0, bucketCount) * fullBucketHeight) + (hasError ? errorHeight : 0);
+        return desiredHeight > maximumHeight;
     }
 
     private void AddMacEmptyCard(string message)
@@ -1018,8 +1142,7 @@ public sealed class UsagePopupForm : Form
 
     private void AddMacApiEquivalentCard(ApiEquivalentEstimate estimate)
     {
-        var displayedProjects = estimate.Projects.Take(3).ToList();
-        var rowCount = estimate.IsAvailable ? 2 + displayedProjects.Count : 1;
+        var rowCount = estimate.IsAvailable ? 3 : 1;
         var noteTop = 46 + (rowCount * 28);
         var card = new RoundedPanel
         {
@@ -1039,16 +1162,7 @@ public sealed class UsagePopupForm : Form
         {
             AddMacValueRow(card, 46, "Estimated cost", FormatEstimatedUsd(estimate.EstimatedUsd, estimate.UnpricedTokens));
             AddMacValueRow(card, 74, "Local history", $"{FormatCompactNumber(estimate.TotalTokens)} tok");
-            var top = 102;
-            foreach (var project in displayedProjects)
-            {
-                AddMacValueRow(
-                    card,
-                    top,
-                    $"{project.Name} · {FormatCompactNumber(project.TotalTokens)}",
-                    FormatEstimatedUsd(project.EstimatedUsd, project.UnpricedTokens));
-                top += 28;
-            }
+            AddMacValueRow(card, 102, "Projects", "Usage details");
         }
         else
         {
@@ -1056,7 +1170,7 @@ public sealed class UsagePopupForm : Form
         }
 
         var note = CreateLabel(
-            estimate.IsAvailable ? FormatApiEstimateNote(estimate, displayedProjects.Count) : "No local Codex token history found",
+            estimate.IsAvailable ? FormatApiEstimateNote(estimate, 0) : "No local Codex token history found",
             8.5f,
             FontStyle.Regular,
             MacMuted);
@@ -1064,6 +1178,24 @@ public sealed class UsagePopupForm : Form
         note.Size = new Size(336, 24);
         note.AutoEllipsis = true;
         card.Controls.Add(note);
+        _content.Controls.Add(card);
+    }
+
+    private void AddMacDetailsHint()
+    {
+        var card = new RoundedPanel
+        {
+            Width = MacContentWidth,
+            Height = 44,
+            Radius = 14,
+            BackColor = MacCard,
+            Margin = new Padding(0, 0, 0, 10),
+            AccessibleName = "Token and API details are available in Usage details"
+        };
+        var label = CreateLabel("Token and API details: Usage details", 9, FontStyle.Regular, MacMuted);
+        label.Location = new Point(16, 10);
+        label.Size = new Size(342, 24);
+        card.Controls.Add(label);
         _content.Controls.Add(card);
     }
 
@@ -1096,7 +1228,7 @@ public sealed class UsagePopupForm : Form
             BackColor = Color.FromArgb(12, 48, 82),
             Margin = new Padding(0, 0, 0, 0)
         };
-        var updated = CreateLabel($"Updated {FormatUpdatedAge(snapshot.UpdatedAt)}", 9, FontStyle.Bold, MacMuted);
+        var updated = CreateLabel($"Quota updated {FormatUpdatedAge(snapshot.UpdatedAt)}", 9, FontStyle.Bold, MacMuted);
         updated.Location = new Point(16, 8);
         updated.Size = new Size(210, 22);
 
@@ -1294,6 +1426,39 @@ public sealed class UsagePopupForm : Form
         return updatedAt.ToLocalTime().ToString("MMM d HH:mm");
     }
 
+    private string OpenAiStatusHeading()
+    {
+        if (_openAiStatus.Codex == OpenAiServiceHealth.Loading &&
+            _openAiStatus.ChatGpt == OpenAiServiceHealth.Loading)
+        {
+            return "OpenAI status · checking";
+        }
+
+        var state = _openAiStatus.IsLive ? "checked" : "unavailable";
+        return $"OpenAI status · {state} {FormatUpdatedAge(_openAiStatus.CheckedAt)}";
+    }
+
+    private static string FormatBucketDisplayName(RateLimitBucket bucket, bool isTrayBucket)
+    {
+        var window = RateLimitNormalizer.FormatWindow(bucket.WindowDurationMins);
+        if (UsageSnapshot.IsFrontierBucket(bucket))
+        {
+            return isTrayBucket ? $"Tray · Frontier · {window}" : $"{window} · Frontier";
+        }
+
+        var sourceName = bucket.Name.Trim();
+        var durationSuffix = $" · {window}";
+        if (sourceName.EndsWith(durationSuffix, StringComparison.OrdinalIgnoreCase))
+        {
+            sourceName = sourceName[..^durationSuffix.Length].TrimEnd();
+        }
+        if (string.IsNullOrWhiteSpace(sourceName) || sourceName.Equals(window, StringComparison.OrdinalIgnoreCase))
+        {
+            sourceName = bucket.LimitId ?? "Rate limit";
+        }
+        return $"{window} · {sourceName}";
+    }
+
     private static string FormatCompactNumber(long? value)
     {
         if (value is null) return "Unavailable";
@@ -1320,7 +1485,7 @@ public sealed class UsagePopupForm : Form
     private static string FormatApiEstimateNote(ApiEquivalentEstimate estimate, int displayedProjects)
     {
         var parts = new List<string> { $"API prices {estimate.PricingReferenceDate}" };
-        if (estimate.ProjectCount > displayedProjects)
+        if (displayedProjects > 0 && estimate.ProjectCount > displayedProjects)
         {
             parts.Add($"top {displayedProjects}/{estimate.ProjectCount}");
         }

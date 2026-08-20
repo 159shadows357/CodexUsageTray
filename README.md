@@ -9,10 +9,11 @@ This personal project is unofficial and is not affiliated with OpenAI.
 ## Features
 
 - Runs as a `WinExe` without a console window.
-- Tray icon styles: `Ring`, `Solid bar`, `Segmented bar`, and `Number only`.
+- Tray icon styles: `Ring`, `Solid bar`, `Segmented bar`, and `Number only (Frontier)`.
 - Usage popup styles: `Classic`, `macOS style`, and `Paper style`.
 - Dark Windows 11-style right-click menu.
 - Displays every rate-limit bucket returned by the server.
+- Uses only the Frontier bucket (`limitId=codex`) for the tray indicator; Spark and other buckets remain visible in the popup.
 - Supports Weekly-only accounts, `rateLimitsByLimitId`, fallback `rateLimits`, `primary`, and `secondary`.
 - Displays reset-credit counts, exact local expiry times, and token activity when the installed Codex version provides them.
 - Provides opt-in reset-credit expiry notification or automatic use with a configurable lead time (6 hours by default).
@@ -84,21 +85,21 @@ dotnet run --project .\src\CodexUsageTray\CodexUsageTray.csproj -c Release
 Publish the application:
 
 ```powershell
-pwsh -File .\scripts\publish.ps1 -Version 0.6.1
+pwsh -File .\scripts\publish.ps1 -Version 0.6.2
 ```
 
 Create the installer ZIP:
 
 ```powershell
-pwsh -File .\scripts\package-release.ps1 -Version 0.6.1
+pwsh -File .\scripts\package-release.ps1 -Version 0.6.2
 ```
 
 Output:
 
 ```text
 artifacts\publish\win-x64\CodexUsageTray.exe
-artifacts\release\CodexUsageTray-0.6.1-win-x64.zip
-artifacts\release\CodexUsageTray-0.6.1-win-x64.zip.sha256
+artifacts\release\CodexUsageTray-0.6.2-win-x64.zip
+artifacts\release\CodexUsageTray-0.6.2-win-x64.zip.sha256
 ```
 
 The ZIP contains `CodexUsageTray-Setup.exe`, `CodexUsageTray.exe`, `README.txt`, `LICENSE.txt`, and `SHA256SUMS.txt`.
@@ -112,7 +113,7 @@ $thumbprint = Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert |
   Where-Object HasPrivateKey |
   Select-Object -First 1 -ExpandProperty Thumbprint
 pwsh -File .\scripts\package-release.ps1 `
-  -Version 0.6.1 `
+  -Version 0.6.2 `
   -CodeSigningThumbprint $thumbprint
 ```
 
@@ -125,9 +126,9 @@ Open `Tray icon style` from the right-click menu:
 - `Ring`: default quota ring without a number.
 - `Solid bar`: continuous fill gauge.
 - `Segmented bar`: four-segment gauge.
-- `Number only`: remaining percentage without the `%` character, label, frame, or card.
+- `Number only (Frontier)`: remaining Frontier percentage without the `%` character, label, frame, or card.
 
-The exact percentage and reset time remain available in the tooltip.
+Every tray style uses the server bucket whose exact `limitId` is `codex`. If that Frontier bucket is unavailable, the tray shows an unavailable state instead of substituting Spark. The exact Frontier percentage and reset time remain available in the tooltip.
 
 ## Popup styles
 

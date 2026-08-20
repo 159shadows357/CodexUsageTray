@@ -125,6 +125,27 @@ public sealed record UsageSnapshot
 
     [JsonIgnore]
     public RateLimitBucket? MostConstrained => Buckets.OrderBy(bucket => bucket.RemainingPercent).FirstOrDefault();
+
+    [JsonIgnore]
+    public RateLimitBucket? TrayBucket => SelectTrayBucket(Buckets);
+
+    [JsonIgnore]
+    public int? TrayRemainingPercent => TrayBucket is { } bucket ? EffectiveRemainingPercent(bucket) : null;
+
+    internal static RateLimitBucket? SelectTrayBucket(IEnumerable<RateLimitBucket> buckets)
+        => OrderTrayCandidates(buckets.Where(IsFrontierBucket)).FirstOrDefault();
+
+    internal static bool IsFrontierBucket(RateLimitBucket bucket) =>
+        string.Equals(bucket.LimitId, "codex", StringComparison.OrdinalIgnoreCase);
+
+    internal static int EffectiveRemainingPercent(RateLimitBucket bucket) =>
+        string.IsNullOrWhiteSpace(bucket.RateLimitReachedType) ? bucket.RemainingPercent : 0;
+
+    private static IOrderedEnumerable<RateLimitBucket> OrderTrayCandidates(IEnumerable<RateLimitBucket> buckets) =>
+        buckets
+            .OrderBy(EffectiveRemainingPercent)
+            .ThenBy(bucket => bucket.Slot.Equals("primary", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+            .ThenBy(bucket => bucket.Key, StringComparer.Ordinal);
 }
 
 public sealed record AppSettings

@@ -26,6 +26,9 @@ internal static class Program
         ("reset timestamp converts without changing instant", ResetTimestampConversion),
         ("invalid reset timestamp becomes unavailable", InvalidResetTimestamp),
         ("most constrained bucket is selected", MostConstrained),
+        ("tray selects Frontier instead of a lower Spark bucket", FrontierTrayBucket),
+        ("tray does not substitute Spark when Frontier is unavailable", FrontierTrayUnavailable),
+        ("tray selects the most constrained Frontier slot deterministically", FrontierTraySlots),
         ("reset credits use availableCount", ResetCredits),
         ("reset-credit details preserve null and empty semantics", ResetCreditDetails),
         ("reset-credit consume outcomes are parsed exactly", ResetCreditOutcomes),
@@ -86,7 +89,10 @@ internal static class Program
         ("protocol compatibility reports unknown schema without throwing", ProtocolCompatibilityDrift),
         ("tray context menu uses dark modern renderer", ModernContextMenuStyle),
         ("usage popup styles keep scrollbars disabled", UsagePopupHasNoScrollbar),
+        ("mac popup compacts bucket cards on short screens", UsagePopupMacCompactBuckets),
+        ("usage popup closes only for an intentional outside pointer action", UsagePopupDeactivatePolicy),
         ("usage popup styles show Codex and ChatGPT service status", UsagePopupShowsOpenAiStatus),
+        ("usage popup identifies the Frontier tray bucket before service status", UsagePopupIdentifiesFrontier),
         ("tray icon replacement does not leak GDI handles", TrayIconDoesNotLeak),
         ("tray tooltip preserves exact percentage", TrayTooltipPreservesPercentage)
     ];
@@ -206,6 +212,51 @@ internal static class Program
         var snapshot = new UsageSnapshot { Buckets = buckets };
         Equal(45, snapshot.MostConstrained!.RemainingPercent);
         Equal("Weekly", snapshot.MostConstrained.Name);
+        return Task.CompletedTask;
+    }
+
+    private static Task FrontierTrayBucket()
+    {
+        var reset = DateTimeOffset.Now.AddDays(7);
+        var frontier = new RateLimitBucket("codex:primary", "Weekly", "codex", "primary", 9, 91, 10080, reset.ToUnixTimeSeconds(), reset, null);
+        var sparkFiveHour = new RateLimitBucket("codex_bengalfox:primary", "GPT-5.3-Codex-Spark · 5h", "codex_bengalfox", "primary", 46, 54, 300, reset.ToUnixTimeSeconds(), reset, null);
+        var sparkWeekly = new RateLimitBucket("codex_bengalfox:secondary", "GPT-5.3-Codex-Spark · Weekly", "codex_bengalfox", "secondary", 20, 80, 10080, reset.ToUnixTimeSeconds(), reset, null);
+        var snapshot = new UsageSnapshot
+        {
+            Status = ConnectionStatus.RateLimitReached,
+            Buckets = [sparkFiveHour, sparkWeekly, frontier]
+        };
+
+        Equal("codex:primary", snapshot.TrayBucket!.Key);
+        Equal(91, snapshot.TrayBucket.RemainingPercent);
+        Equal(ConnectionStatus.Connected, TrayApplicationContext.TrayConnectionStatus(snapshot.Status, snapshot.TrayBucket));
+        Equal("Codex Frontier · Weekly 91% left · Reset " + reset.ToString("MMM d HH:mm", System.Globalization.CultureInfo.InvariantCulture), TrayTooltipFormatter.Format(snapshot));
+        return Task.CompletedTask;
+    }
+
+    private static Task FrontierTrayUnavailable()
+    {
+        var spark = new RateLimitBucket("codex_bengalfox:primary", "GPT-5.3-Codex-Spark · 5h", "codex_bengalfox", "primary", 46, 54, 300, null, null, null);
+        var snapshot = new UsageSnapshot { Status = ConnectionStatus.Connected, Buckets = [spark] };
+        True(snapshot.TrayBucket is null);
+        Equal("Codex Frontier · unavailable", TrayTooltipFormatter.Format(snapshot));
+
+        var missingLimitId = spark with { Key = "default:primary", Name = "Weekly", LimitId = "default", RemainingPercent = 72 };
+        True((snapshot with { Buckets = [missingLimitId] }).TrayBucket is null);
+        return Task.CompletedTask;
+    }
+
+    private static Task FrontierTraySlots()
+    {
+        var primary = new RateLimitBucket("codex:primary", "Frontier · 5h", "CODEX", "primary", 20, 80, 300, null, null, null);
+        var secondary = new RateLimitBucket("codex:secondary", "Frontier · Weekly", "codex", "secondary", 60, 40, 10080, null, null, null);
+        var reached = primary with { RateLimitReachedType = "hard_limit" };
+
+        Equal("codex:secondary", UsageSnapshot.SelectTrayBucket([primary, secondary])!.Key);
+        Equal("codex:primary", UsageSnapshot.SelectTrayBucket([primary, primary with { Key = "codex:secondary", Slot = "secondary" }])!.Key);
+        Equal("codex:primary", UsageSnapshot.SelectTrayBucket([secondary, reached])!.Key);
+        Equal(0, UsageSnapshot.EffectiveRemainingPercent(reached));
+        Equal(ConnectionStatus.RateLimitReached, TrayApplicationContext.TrayConnectionStatus(ConnectionStatus.RateLimitReached, reached));
         return Task.CompletedTask;
     }
 
@@ -594,8 +645,12 @@ internal static class Program
         var formerBackingColor = Color.FromArgb(255, 20, 23, 29);
         Equal(0, CountColor(bitmap, labelColor));
         True(CountPixelsIn(bitmap, new Rectangle(0, 0, 16, 16), color => color.ToArgb() == valueColor.ToArgb()) > 0);
+        True(CountPixels(bitmap, color => color.A > 0 && color.R < 30 && color.G < 30 && color.B < 30) > 0);
         Equal(0, CountColor(bitmap, formerBackingColor));
         Equal(0, bitmap.GetPixel(0, 0).A);
+
+        using var stale = TrayIconRenderer.RenderFrame(ConnectionStatus.DataStale, 50, TrayIconStyle.CodexPercent, 16);
+        True(CountPixelsIn(stale, new Rectangle(13, 0, 3, 3), color => color.ToArgb() == formerBackingColor.ToArgb()) > 0);
         return Task.CompletedTask;
     }
 
@@ -1544,7 +1599,7 @@ internal static class Program
         var reset = new DateTimeOffset(2026, 7, 22, 8, 0, 0, TimeSpan.FromHours(7));
         var bucket = new RateLimitBucket("codex:primary", "Weekly", "codex", "primary", 26, 74, 10080, reset.ToUnixTimeSeconds(), reset, null);
         var connected = new UsageSnapshot { Status = ConnectionStatus.Connected, Buckets = [bucket] };
-        Equal("Codex · Weekly 74% left · Reset Jul 22 08:00", TrayTooltipFormatter.Format(connected));
+        Equal("Codex Frontier · Weekly 74% left · Reset Jul 22 08:00", TrayTooltipFormatter.Format(connected));
 
         var longName = bucket with { Name = new string('W', 100) };
         var compact = TrayTooltipFormatter.Format(connected with { Buckets = [longName] });
@@ -1673,6 +1728,31 @@ internal static class Program
         return Task.CompletedTask;
     }
 
+    private static Task UsagePopupDeactivatePolicy()
+    {
+        var bounds = new Rectangle(100, 100, 430, 700);
+        var inside = new Point(200, 200);
+        var outside = new Point(20, 20);
+        var ready = TimeSpan.FromSeconds(1);
+
+        False(UsagePopupForm.ShouldHideOnDeactivate(false, true, false, ready, MouseButtons.Left, bounds, outside));
+        False(UsagePopupForm.ShouldHideOnDeactivate(true, false, false, ready, MouseButtons.Left, bounds, outside));
+        False(UsagePopupForm.ShouldHideOnDeactivate(true, true, true, ready, MouseButtons.Left, bounds, outside));
+        False(UsagePopupForm.ShouldHideOnDeactivate(true, true, false, TimeSpan.FromMilliseconds(200), MouseButtons.Left, bounds, outside));
+        False(UsagePopupForm.ShouldHideOnDeactivate(true, true, false, ready, MouseButtons.None, bounds, outside));
+        False(UsagePopupForm.ShouldHideOnDeactivate(true, true, false, ready, MouseButtons.Left, bounds, inside));
+        True(UsagePopupForm.ShouldHideOnDeactivate(true, true, false, ready, MouseButtons.Left, bounds, outside));
+        return Task.CompletedTask;
+    }
+
+    private static Task UsagePopupMacCompactBuckets()
+    {
+        True(UsagePopupForm.ShouldUseCompactMacBuckets(768, 3, false));
+        True(UsagePopupForm.ShouldUseCompactMacBuckets(768, 2, true));
+        False(UsagePopupForm.ShouldUseCompactMacBuckets(1080, 3, false));
+        return Task.CompletedTask;
+    }
+
     private static Task UsagePopupShowsOpenAiStatus()
     {
         var status = new OpenAiStatusSnapshot
@@ -1695,6 +1775,54 @@ internal static class Program
             True(text.Contains("Operational"), $"{style} did not show the Codex status value.");
             True(text.Contains("Degraded performance"), $"{style} did not show the ChatGPT status value.");
             Equal(2, Descendants(popup).OfType<OpenAiStatusGraph>().Count());
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private static Task UsagePopupIdentifiesFrontier()
+    {
+        var now = DateTimeOffset.Now;
+        var status = new OpenAiStatusSnapshot
+        {
+            CheckedAt = now,
+            IsLive = true,
+            Codex = OpenAiServiceHealth.Operational,
+            ChatGpt = OpenAiServiceHealth.Operational
+        };
+        var snapshot = new UsageSnapshot
+        {
+            UpdatedAt = now.AddMinutes(-2),
+            IsLive = true,
+            Status = ConnectionStatus.Connected,
+            Buckets =
+            [
+                new("codex:primary", "Weekly", "codex", "primary", 9, 91, 10080, now.AddDays(7).ToUnixTimeSeconds(), now.AddDays(7), null),
+                new("codex_bengalfox:primary", "GPT-5.3-Codex-Spark · 5h", "codex_bengalfox", "primary", 46, 54, 300, now.AddHours(5).ToUnixTimeSeconds(), now.AddHours(5), null),
+                new("codex_bengalfox:secondary", "GPT-5.3-Codex-Spark · Weekly", "codex_bengalfox", "secondary", 20, 80, 10080, now.AddDays(7).ToUnixTimeSeconds(), now.AddDays(7), null)
+            ]
+        };
+
+        foreach (var style in Enum.GetValues<PopupStyle>())
+        {
+            using var popup = new UsagePopupForm(popupStyle: style);
+            popup.UpdateOpenAiStatus(status);
+            popup.UpdateSnapshot(snapshot);
+
+            var text = Descendants(popup)
+                .Select(control => control.Text)
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .ToList();
+            True(text.Contains("Tray · Frontier · Weekly"), $"{style} did not identify the Frontier tray bucket.");
+            True(text.Contains("5h · GPT-5.3-Codex-Spark"), $"{style} did not preserve the Spark 5h prefix.");
+            True(text.Contains("Weekly · GPT-5.3-Codex-Spark"), $"{style} did not preserve the Spark weekly prefix.");
+            True(text.Any(value => value.StartsWith("Quota updated ", StringComparison.Ordinal)), $"{style} did not label quota freshness.");
+            True(text.Any(value => value.StartsWith("OpenAI status · checked ", StringComparison.Ordinal)), $"{style} did not label status freshness.");
+
+            var topLevel = popup.Controls.OfType<FlowLayoutPanel>().Single().Controls.Cast<Control>().ToList();
+            var trayIndex = topLevel.FindIndex(control => control.AccessibleName?.StartsWith("Tray indicator, ", StringComparison.Ordinal) == true);
+            var statusIndex = topLevel.FindIndex(control => control.AccessibleName?.StartsWith("OpenAI status, ", StringComparison.Ordinal) == true);
+            True(trayIndex >= 0 && statusIndex > trayIndex, $"{style} did not place quota before OpenAI status.");
         }
 
         return Task.CompletedTask;

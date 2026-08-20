@@ -101,7 +101,11 @@ public static class TrayIconRenderer
                 break;
         }
 
-        if (style != TrayIconStyle.CodexPercent)
+        if (style == TrayIconStyle.CodexPercent && status == ConnectionStatus.DataStale)
+        {
+            DrawStaleBadge(graphics, geometry.TextBody, size);
+        }
+        else if (style != TrayIconStyle.CodexPercent)
         {
             var markBounds = style == TrayIconStyle.Ring ? geometry.Ring : geometry.BarBody;
             switch (status)
@@ -197,6 +201,7 @@ public static class TrayIconRenderer
     {
         graphics.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
         using var valueBrush = new SolidBrush(color);
+        using var outlineBrush = new SolidBrush(Color.FromArgb(230, 7, 10, 14));
         var valueBounds = new RectangleF(bounds.X, bounds.Y, bounds.Width, bounds.Height);
         var value = FormatPercentOnlyValue(status, knownQuota, remaining);
 
@@ -207,6 +212,15 @@ public static class TrayIconRenderer
             FormatFlags = StringFormatFlags.NoWrap
         };
         using var valueFont = CreateFittedFont(graphics, value, valueBounds, format);
+        foreach (var offset in new[] { new Point(-1, 0), new Point(1, 0), new Point(0, -1), new Point(0, 1) })
+        {
+            var outlineBounds = new RectangleF(
+                valueBounds.X + offset.X,
+                valueBounds.Y + offset.Y,
+                valueBounds.Width,
+                valueBounds.Height);
+            graphics.DrawString(value, valueFont, outlineBrush, outlineBounds, format);
+        }
         graphics.DrawString(value, valueFont, valueBrush, valueBounds, format);
     }
 

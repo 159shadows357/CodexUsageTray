@@ -9,10 +9,11 @@ Created by **Pongsathon.T** · [MIT License](LICENSE) · [English](README.md)
 ## ความสามารถ
 
 - รันแบบ `WinExe` ไม่มี console window
-- เลือก tray icon ได้ระหว่าง `Ring`, `Solid bar`, `Segmented bar` และ `Number only`
+- เลือก tray icon ได้ระหว่าง `Ring`, `Solid bar`, `Segmented bar` และ `Number only (Frontier)`
 - เลือก usage popup ได้ระหว่าง `Classic`, `macOS style` และ `Paper style`
 - เมนูคลิกขวาใช้ dark style ให้ใกล้เคียง Windows 11
 - popup แสดงทุก rate-limit bucket ที่ server ส่งมา
+- tray ใช้เฉพาะ Frontier bucket (`limitId=codex`) ส่วน Spark และ bucket อื่นยังแสดงใน popup
 - รองรับ Weekly-only, `rateLimitsByLimitId`, fallback `rateLimits`, `primary` และ `secondary`
 - แสดงจำนวน reset credits, เวลาหมดอายุตามเวลาท้องถิ่น และ token activity เมื่อ endpoint รองรับ
 - เลือกแจ้งเตือนหรือใช้ reset credit อัตโนมัติได้ โดยกำหนดเวลาล่วงหน้าก่อนหมดอายุเอง (ค่า default คือ 6 ชั่วโมง)
@@ -56,7 +57,7 @@ dotnet run --project .\src\CodexUsageTray\CodexUsageTray.csproj -c Release
 ## Publish
 
 ```powershell
-pwsh -File .\scripts\publish.ps1 -Version 0.6.1
+pwsh -File .\scripts\publish.ps1 -Version 0.6.2
 ```
 
 ผลลัพธ์:
@@ -100,7 +101,7 @@ uninstall จะเก็บ settings, cache และ logs ใต้ `%LOCALAPP
 ## สร้าง ZIP สำหรับติดตั้งเครื่องอื่น
 
 ```powershell
-pwsh -File .\scripts\package-release.ps1 -Version 0.6.1
+pwsh -File .\scripts\package-release.ps1 -Version 0.6.2
 ```
 
 script จะ publish application ล่าสุดก่อนสร้าง Setup และ ZIP ใช้ `-SkipAppPublish` ได้เมื่อยืนยันแล้วว่า `artifacts\publish\win-x64` เป็น build ที่ต้องการ
@@ -108,7 +109,7 @@ script จะ publish application ล่าสุดก่อนสร้าง 
 ผลลัพธ์:
 
 ```text
-artifacts\release\CodexUsageTray-0.6.1-win-x64.zip
+artifacts\release\CodexUsageTray-0.6.2-win-x64.zip
 ```
 
 ภายใน ZIP มี `CodexUsageTray-Setup.exe`, application payload, `README.txt`, `LICENSE.txt` และ `SHA256SUMS.txt` ผู้ใช้ต้อง extract ทุกไฟล์แล้วดับเบิลคลิก Setup ตัว installer ใช้สิทธิ์ current user, เปิด Start with Windows เป็นค่า default และไม่ต้องติดตั้ง .NET เพิ่ม
@@ -132,7 +133,7 @@ $thumbprint = Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert |
   Where-Object HasPrivateKey |
   Select-Object -First 1 -ExpandProperty Thumbprint
 pwsh -File .\scripts\package-release.ps1 `
-  -Version 0.6.1 `
+  -Version 0.6.2 `
   -CodeSigningThumbprint $thumbprint
 ```
 
@@ -156,9 +157,9 @@ pwsh -File .\scripts\start-with-windows.ps1 -Disable
 - `Ring`: ค่า default เป็นวงแสดงสัดส่วนโดยไม่มีตัวเลข
 - `Solid bar`: แถบเติมต่อเนื่อง
 - `Segmented bar`: แถบแบ่งสี่ช่วง
-- `Number only`: แสดงเฉพาะตัวเลขเปอร์เซ็นต์คงเหลือโดยไม่ใส่เครื่องหมาย `%` ใช้ `Segoe UI` บนพื้นโปร่งใส ไม่มี label, กรอบ หรือ card
+- `Number only (Frontier)`: แสดงเฉพาะตัวเลขเปอร์เซ็นต์คงเหลือของ Frontier โดยไม่ใส่เครื่องหมาย `%` ใช้ `Segoe UI` บนพื้นโปร่งใส ไม่มี label, กรอบ หรือ card
 
-โปรแกรมเปลี่ยน icon ทันทีและเก็บค่าที่เลือกใน `settings.json` ทั้งสองแบบ bar ไม่มีขั้วหรือกรอบรูป battery ตัวเลขเปอร์เซ็นต์ที่แน่นอนอยู่ใน tooltip
+ทุก tray style ใช้ bucket ที่มี `limitId=codex` เท่านั้น หากไม่พบ Frontier โปรแกรมจะแสดงสถานะ unavailable โดยไม่หยิบ Spark มาแทน โปรแกรมเปลี่ยน icon ทันทีและเก็บค่าที่เลือกใน `settings.json` ทั้งสองแบบ bar ไม่มีขั้วหรือกรอบรูป battery ตัวเลขเปอร์เซ็นต์ที่แน่นอนอยู่ใน tooltip
 
 ## Popup style
 

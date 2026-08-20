@@ -21,7 +21,8 @@ Use the existing project structure and built-in .NET APIs. Do not add a NuGet pa
 - Support `rateLimitsByLimitId` and fallback `rateLimits`, including `primary` and `secondary`.
 - Display only buckets returned by the server. Never invent a 5-hour bucket.
 - Calculate `remainingPercent = clamp(100 - usedPercent, 0, 100)`.
-- Use the bucket with the lowest remaining percentage for the tray icon and show every bucket in the popup.
+- Use the exact Frontier bucket (`limitId = codex`, case-insensitive) for the tray icon and show every bucket in the popup.
+- Never substitute a Spark-specific bucket when the Frontier bucket is unavailable; show the tray value as unavailable instead.
 - Treat optional or unknown account/usage fields as unavailable and keep the application running.
 - Read local session JSONL in read-only mode only for `cwd`, model, timestamp, and token counters.
 - Never read Codex authentication files or store prompts/responses.

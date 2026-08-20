@@ -5,7 +5,7 @@
     <UseWindowsForms>true</UseWindowsForms>
     <AssemblyName>CodexUsageTray</AssemblyName>
     <RootNamespace>CodexUsageTray</RootNamespace>
-    <Version>0.6.1</Version>
+    <Version>0.6.2</Version>
     <Authors>Pongsathon.T</Authors>
     <Company>Pongsathon.T</Company>
     <Product>Codex Usage Tray</Product>
