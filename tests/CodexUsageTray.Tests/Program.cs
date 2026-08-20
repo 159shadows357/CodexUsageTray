@@ -88,6 +88,7 @@ internal static class Program
         ("protocol compatibility recognizes current and legacy schemas", ProtocolCompatibilityKnown),
         ("protocol compatibility reports unknown schema without throwing", ProtocolCompatibilityDrift),
         ("tray context menu uses dark modern renderer", ModernContextMenuStyle),
+        ("tray action queue creates a popup handle before BeginInvoke", TrayActionQueueCreatesHandle),
         ("usage popup styles keep scrollbars disabled", UsagePopupHasNoScrollbar),
         ("mac popup compacts bucket cards on short screens", UsagePopupMacCompactBuckets),
         ("usage popup closes only for an intentional outside pointer action", UsagePopupDeactivatePolicy),
@@ -1697,6 +1698,19 @@ internal static class Program
         True(menu.Renderer is ModernToolStripRenderer, "Root menu renderer should be modern.");
         True(child.DropDown.Renderer is ModernToolStripRenderer, "Submenu renderer should be modern.");
         True(child.Padding.Left >= 10 && child.Padding.Top >= 6, $"Expected padded menu item, actual {child.Padding}.");
+        return Task.CompletedTask;
+    }
+
+    private static Task TrayActionQueueCreatesHandle()
+    {
+        using var popup = new UsagePopupForm();
+        False(popup.IsHandleCreated);
+        var invoked = false;
+
+        TrayApplicationContext.QueueControlAction(popup, () => invoked = true);
+        True(popup.IsHandleCreated);
+        Application.DoEvents();
+        True(invoked);
         return Task.CompletedTask;
     }
 

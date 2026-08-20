@@ -85,21 +85,21 @@ dotnet run --project .\src\CodexUsageTray\CodexUsageTray.csproj -c Release
 Publish the application:
 
 ```powershell
-pwsh -File .\scripts\publish.ps1 -Version 0.6.2
+pwsh -File .\scripts\publish.ps1 -Version 0.6.3
 ```
 
 Create the installer ZIP:
 
 ```powershell
-pwsh -File .\scripts\package-release.ps1 -Version 0.6.2
+pwsh -File .\scripts\package-release.ps1 -Version 0.6.3
 ```
 
 Output:
 
 ```text
 artifacts\publish\win-x64\CodexUsageTray.exe
-artifacts\release\CodexUsageTray-0.6.2-win-x64.zip
-artifacts\release\CodexUsageTray-0.6.2-win-x64.zip.sha256
+artifacts\release\CodexUsageTray-0.6.3-win-x64.zip
+artifacts\release\CodexUsageTray-0.6.3-win-x64.zip.sha256
 ```
 
 The ZIP contains `CodexUsageTray-Setup.exe`, `CodexUsageTray.exe`, `README.txt`, `LICENSE.txt`, and `SHA256SUMS.txt`.
@@ -113,7 +113,7 @@ $thumbprint = Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert |
   Where-Object HasPrivateKey |
   Select-Object -First 1 -ExpandProperty Thumbprint
 pwsh -File .\scripts\package-release.ps1 `
-  -Version 0.6.2 `
+  -Version 0.6.3 `
   -CodeSigningThumbprint $thumbprint
 ```
 

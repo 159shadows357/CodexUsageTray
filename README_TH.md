@@ -57,7 +57,7 @@ dotnet run --project .\src\CodexUsageTray\CodexUsageTray.csproj -c Release
 ## Publish
 
 ```powershell
-pwsh -File .\scripts\publish.ps1 -Version 0.6.2
+pwsh -File .\scripts\publish.ps1 -Version 0.6.3
 ```
 
 ผลลัพธ์:
@@ -101,7 +101,7 @@ uninstall จะเก็บ settings, cache และ logs ใต้ `%LOCALAPP
 ## สร้าง ZIP สำหรับติดตั้งเครื่องอื่น
 
 ```powershell
-pwsh -File .\scripts\package-release.ps1 -Version 0.6.2
+pwsh -File .\scripts\package-release.ps1 -Version 0.6.3
 ```
 
 script จะ publish application ล่าสุดก่อนสร้าง Setup และ ZIP ใช้ `-SkipAppPublish` ได้เมื่อยืนยันแล้วว่า `artifacts\publish\win-x64` เป็น build ที่ต้องการ
@@ -109,7 +109,7 @@ script จะ publish application ล่าสุดก่อนสร้าง 
 ผลลัพธ์:
 
 ```text
-artifacts\release\CodexUsageTray-0.6.2-win-x64.zip
+artifacts\release\CodexUsageTray-0.6.3-win-x64.zip
 ```
 
 ภายใน ZIP มี `CodexUsageTray-Setup.exe`, application payload, `README.txt`, `LICENSE.txt` และ `SHA256SUMS.txt` ผู้ใช้ต้อง extract ทุกไฟล์แล้วดับเบิลคลิก Setup ตัว installer ใช้สิทธิ์ current user, เปิด Start with Windows เป็นค่า default และไม่ต้องติดตั้ง .NET เพิ่ม
@@ -133,7 +133,7 @@ $thumbprint = Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert |
   Where-Object HasPrivateKey |
   Select-Object -First 1 -ExpandProperty Thumbprint
 pwsh -File .\scripts\package-release.ps1 `
-  -Version 0.6.2 `
+  -Version 0.6.3 `
   -CodeSigningThumbprint $thumbprint
 ```
 

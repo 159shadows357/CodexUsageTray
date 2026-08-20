@@ -196,7 +196,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         };
         _trayIcon.MouseClick += (_, args) =>
         {
-            if (args.Button == MouseButtons.Left) _popup.BeginInvoke(OpenUsage);
+            if (args.Button == MouseButtons.Left) QueueControlAction(_popup, OpenUsage);
         };
         UpdateTray();
         if (showMenuForSmokeTest)
@@ -707,6 +707,13 @@ public sealed class TrayApplicationContext : ApplicationContext
                 ? ConnectionStatus.RateLimitReached
                 : ConnectionStatus.Connected
             : snapshotStatus;
+
+    internal static void QueueControlAction(Control control, Action action)
+    {
+        if (control.IsDisposed || control.Disposing) return;
+        _ = control.Handle;
+        control.BeginInvoke(action);
+    }
 
     private void UpdateTooltip()
     {
