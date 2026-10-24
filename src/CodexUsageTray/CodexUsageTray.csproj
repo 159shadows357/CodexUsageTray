@@ -5,7 +5,7 @@
     <UseWindowsForms>true</UseWindowsForms>
     <AssemblyName>CodexUsageTray</AssemblyName>
     <RootNamespace>CodexUsageTray</RootNamespace>
-    <Version>2026.10.24.1</Version>
+    <Version>2026.10.25.1</Version>
     <AssemblyVersion>$(Version)</AssemblyVersion>
     <FileVersion>$(Version)</FileVersion>
     <Authors>Pongsathon.T</Authors>

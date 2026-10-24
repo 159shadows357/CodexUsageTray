@@ -1,17 +1,11 @@
 using System.ComponentModel;
 using System.Drawing.Drawing2D;
 using System.Globalization;
-using System.Runtime.InteropServices;
 
 namespace CodexUsageTray;
 
 public sealed partial class UsagePopupForm : Form
 {
-    private const int WmSetRedraw = 0x000B;
-    private const uint RdwInvalidate = 0x0001;
-    private const uint RdwErase = 0x0004;
-    private const uint RdwAllChildren = 0x0080;
-    private const uint RdwUpdateNow = 0x0100;
     private const int ClassicContentWidth = 350;
     private const int MacContentWidth = 374;
     private const int PaperContentWidth = 370;
@@ -35,6 +29,7 @@ public sealed partial class UsagePopupForm : Form
     private OpenAiStatusSnapshot _openAiStatus = new();
     private DateTimeOffset _shownAt;
     private PopupStyle _popupStyle;
+    private int _renderDepth;
 
     public UsagePopupForm(
         bool closeOnDeactivate = true,
@@ -55,7 +50,7 @@ public sealed partial class UsagePopupForm : Form
         KeyPreview = true;
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint, true);
 
-        _content = new FlowLayoutPanel
+        _content = new BufferedFlowLayoutPanel
         {
             Dock = DockStyle.Fill,
             FlowDirection = FlowDirection.TopDown,
@@ -95,8 +90,8 @@ public sealed partial class UsagePopupForm : Form
         _snapshot = snapshot;
         _forecastFreshnessState = ForecastFreshnessState(now);
         var displaySnapshot = snapshot with { Buckets = PopupBuckets(snapshot).ToList() };
-        var suppressRedraw = Visible && IsHandleCreated;
-        if (suppressRedraw) SetRedraw(false);
+        var restoreFocus = _renderDepth == 0 && Visible && ContainsFocus;
+        _renderDepth++;
         try
         {
             SuspendLayout();
@@ -147,15 +142,18 @@ public sealed partial class UsagePopupForm : Form
         }
         finally
         {
-            if (suppressRedraw && IsHandleCreated)
+            try
             {
-                SetRedraw(true);
-                RedrawWindow(
-                    Handle,
-                    IntPtr.Zero,
-                    IntPtr.Zero,
-                    RdwInvalidate | RdwErase | RdwAllChildren | RdwUpdateNow);
+                if (restoreFocus && Visible && !IsDisposed && IsHandleCreated)
+                {
+                    // Disposing the focused action can deactivate the form while its
+                    // replacement controls are built. Restore only focus we owned.
+                    Activate();
+                    _content.SelectNextControl(null, true, true, true, false);
+                }
+                if (Visible) Invalidate(true);
             }
+            finally { _renderDepth--; }
         }
     }
 
@@ -189,6 +187,16 @@ public sealed partial class UsagePopupForm : Form
     protected override void OnDeactivate(EventArgs eventArgs)
     {
         base.OnDeactivate(eventArgs);
+        if (_renderDepth > 0 || !_closeOnDeactivate || !Visible || !IsHandleCreated || IsDisposed || Disposing) return;
+        // WinForms raises Deactivate before the focused child loses focus. Check
+        // after the activation messages settle, without queuing render-induced events.
+        var shownAt = _shownAt;
+        BeginInvoke((Action)(() => { if (_shownAt == shownAt) HideIfInactive(); }));
+    }
+
+    private void HideIfInactive()
+    {
+        if (IsDisposed || Disposing || _renderDepth > 0) return;
         if (ShouldHideOnDeactivate(
             _closeOnDeactivate,
             Visible,
@@ -219,16 +227,6 @@ public sealed partial class UsagePopupForm : Form
         !containsFocus &&
         shownAge > TimeSpan.FromMilliseconds(500) &&
         !bounds.Contains(cursorPosition);
-
-    private void SetRedraw(bool enabled) =>
-        SendMessage(Handle, WmSetRedraw, enabled ? new IntPtr(1) : IntPtr.Zero, IntPtr.Zero);
-
-    [DllImport("user32.dll", EntryPoint = "SendMessageW")]
-    private static extern IntPtr SendMessage(IntPtr window, int message, IntPtr wParam, IntPtr lParam);
-
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool RedrawWindow(IntPtr window, IntPtr updateRectangle, IntPtr updateRegion, uint flags);
 
     protected override void OnPaint(PaintEventArgs e)
     {

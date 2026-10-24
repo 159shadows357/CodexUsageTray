@@ -11,6 +11,7 @@ Created by **Pongsathon.T** · [MIT License](LICENSE) · [English](README.md)
 - รันแบบ `WinExe` ไม่มี console window
 - เลือก tray icon ได้ระหว่าง `Ring`, `Solid bar`, `Segmented bar` และ `Number only`
 - เลือก usage popup ได้ระหว่าง `Classic`, `macOS style`, `Paper style`, `Cadra Light` และ `Cadra Dark`
+- รีเฟรชโควตา สถานะระบบ และ forecast โดยรักษาเนื้อหาและ keyboard focus ของ popup ไม่ให้กลายเป็นกรอบดำ
 - เมนูคลิกขวาใช้ dark style ให้ใกล้เคียง Windows 11
 - popup แสดงทุก rate-limit bucket ที่ server ส่งมา
 - tray ใช้ `Frontier only` (`limitId=codex`) เป็นค่าเริ่มต้น และเลือก `Lowest remaining bucket` ได้จาก `Tray quota source` ทุก bucket ยังดูได้ใน popup
@@ -44,7 +45,7 @@ pwsh -File .\scripts\build.ps1
 pwsh -File .\scripts\test.ps1
 ```
 
-test project ใช้ package-free runner และไม่เพิ่ม NuGet test framework ผลล่าสุดคือ 140 tests ผ่านทั้งหมด
+test project ใช้ package-free runner และไม่เพิ่ม NuGet test framework ผลล่าสุดคือ 143 tests ผ่านทั้งหมด
 
 ## Run จาก source
 
@@ -57,7 +58,7 @@ dotnet run --project .\src\CodexUsageTray\CodexUsageTray.csproj -c Release
 ## Publish
 
 ```powershell
-pwsh -File .\scripts\publish.ps1 -Version 2026.10.24.1
+pwsh -File .\scripts\publish.ps1 -Version 2026.10.25.1
 ```
 
 ผลลัพธ์:
@@ -101,7 +102,7 @@ uninstall จะเก็บ settings, cache และ logs ใต้ `%LOCALAPP
 ## สร้าง ZIP สำหรับติดตั้งเครื่องอื่น
 
 ```powershell
-pwsh -File .\scripts\package-release.ps1 -Version 2026.10.24.1
+pwsh -File .\scripts\package-release.ps1 -Version 2026.10.25.1
 ```
 
 script จะ publish application ล่าสุดก่อนสร้าง Setup และ ZIP ใช้ `-SkipAppPublish` ได้เมื่อยืนยันแล้วว่า `artifacts\publish\win-x64` เป็น build ที่ต้องการ
@@ -109,7 +110,7 @@ script จะ publish application ล่าสุดก่อนสร้าง 
 ผลลัพธ์:
 
 ```text
-artifacts\release\CodexUsageTray-2026.10.24.1-win-x64.zip
+artifacts\release\CodexUsageTray-2026.10.25.1-win-x64.zip
 ```
 
 ภายใน ZIP มี `CodexUsageTray-Setup.exe`, application payload, `README.txt`, `LICENSE.txt` และ `SHA256SUMS.txt` ผู้ใช้ต้อง extract ทุกไฟล์แล้วดับเบิลคลิก Setup ตัว installer ใช้สิทธิ์ current user, เปิด Start with Windows เป็นค่า default และไม่ต้องติดตั้ง .NET เพิ่ม
@@ -133,7 +134,7 @@ $thumbprint = Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert |
   Where-Object HasPrivateKey |
   Select-Object -First 1 -ExpandProperty Thumbprint
 pwsh -File .\scripts\package-release.ps1 `
-  -Version 2026.10.24.1 `
+  -Version 2026.10.25.1 `
   -CodeSigningThumbprint $thumbprint
 ```
 
@@ -186,7 +187,7 @@ popup แสดงโอกาสรีเซ็ต Codex ส่วนกลา�
 
 Plus, Pro และแผน ChatGPT อื่นอ่าน bucket ที่ local app-server ส่งมาจริง Plus อาจมีรอบ 5 ชั่วโมงและรายสัปดาห์ โปรแกรมไม่สร้างรอบโควตา จำนวนข้อความ หรือสิทธิ reset credit จากชื่อแผน หาก optional token-activity endpoint ใช้ไม่ได้ โควตายังอัปเดตได้ ตรวจ runtime Codex ที่เปลี่ยนทุก 5 นาทีและหลัง resume โดยเคารพ explicit CLI override และ reconnect เฉพาะ child app-server ของ tray
 
-ใช้เลขเวอร์ชัน **year.month.day.patch** เช่น `2026.10.24.1` คือ release แรกของวันนั้น เก็บครบสี่ส่วนใน metadata, tag และชื่อ ZIP หลัก มี ZIP ชื่อสามส่วนที่มี binary เหมือนกันทุก byte เพื่อให้ updater รุ่น `0.6.x` อัปเดตข้ามมาได้ หากติดตั้งเองให้เลือก ZIP ชื่อสี่ส่วน
+ใช้เลขเวอร์ชัน **year.month.day.patch** เช่น `2026.10.25.1` คือ release แรกของวันนั้น เก็บครบสี่ส่วนใน metadata, tag และชื่อ ZIP หลัก มี ZIP ชื่อสามส่วนที่มี binary เหมือนกันทุก byte เพื่อให้ updater รุ่น `0.6.x` อัปเดตข้ามมาได้ หากติดตั้งเองให้เลือก ZIP ชื่อสี่ส่วน
 
 ## Reset credits
 

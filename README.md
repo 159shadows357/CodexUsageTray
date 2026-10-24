@@ -11,6 +11,7 @@ This personal project is unofficial and is not affiliated with OpenAI.
 - Runs as a `WinExe` without a console window.
 - Tray icon styles: `Ring`, `Solid bar`, `Segmented bar`, and `Number only`.
 - Usage popup styles: `Classic`, `macOS style`, `Paper style`, `Cadra Light`, and `Cadra Dark`.
+- Keeps popup content and keyboard focus visible during quota, service-status and forecast refreshes.
 - Dark Windows 11-style right-click menu.
 - Displays every rate-limit bucket returned by the server.
 - Uses `Frontier only` (`limitId=codex`) for the tray by default; `Tray quota source` also offers `Lowest remaining bucket`. Every server bucket remains available in the popup.
@@ -74,7 +75,7 @@ pwsh -File .\scripts\test.ps1
 dotnet format .\CodexUsageTray.slnx --verify-no-changes --no-restore
 ```
 
-The test project uses a package-free runner. The current suite contains 140 tests.
+The test project uses a package-free runner. The current suite contains 143 tests.
 
 Run from source:
 
@@ -85,21 +86,21 @@ dotnet run --project .\src\CodexUsageTray\CodexUsageTray.csproj -c Release
 Publish the application:
 
 ```powershell
-pwsh -File .\scripts\publish.ps1 -Version 2026.10.24.1
+pwsh -File .\scripts\publish.ps1 -Version 2026.10.25.1
 ```
 
 Create the installer ZIP:
 
 ```powershell
-pwsh -File .\scripts\package-release.ps1 -Version 2026.10.24.1
+pwsh -File .\scripts\package-release.ps1 -Version 2026.10.25.1
 ```
 
 Output:
 
 ```text
 artifacts\publish\win-x64\CodexUsageTray.exe
-artifacts\release\CodexUsageTray-2026.10.24.1-win-x64.zip
-artifacts\release\CodexUsageTray-2026.10.24.1-win-x64.zip.sha256
+artifacts\release\CodexUsageTray-2026.10.25.1-win-x64.zip
+artifacts\release\CodexUsageTray-2026.10.25.1-win-x64.zip.sha256
 ```
 
 The ZIP contains `CodexUsageTray-Setup.exe`, `CodexUsageTray.exe`, `README.txt`, `LICENSE.txt`, and `SHA256SUMS.txt`.
@@ -113,7 +114,7 @@ $thumbprint = Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert |
   Where-Object HasPrivateKey |
   Select-Object -First 1 -ExpandProperty Thumbprint
 pwsh -File .\scripts\package-release.ps1 `
-  -Version 2026.10.24.1 `
+  -Version 2026.10.25.1 `
   -CodeSigningThumbprint $thumbprint
 ```
 
@@ -154,7 +155,7 @@ On failure, the last good forecast remains marked stale; missing probabilities r
 
 Plus, Pro, and other signed-in ChatGPT plans use the rate-limit buckets actually returned by the local app-server. Plus can return a five-hour window and a weekly window; the app does not manufacture either window, a reset credit, or a fixed message allowance. A missing optional token-activity endpoint does not prevent quota updates. The tray checks for a changed Codex runtime every five minutes and after resume, respecting explicit CLI overrides and restarting only its own app-server child.
 
-Releases use **year.month.day.patch**, for example `2026.10.24.1` (the first release that day). All four parts are preserved in metadata, tags and canonical asset names. For migration from legacy `0.6.x` updaters, each release also includes an identical three-part-named compatibility ZIP. Both names contain the same verified binaries; use the four-part ZIP for manual installation.
+Releases use **year.month.day.patch**, for example `2026.10.25.1` (the first release that day). All four parts are preserved in metadata, tags and canonical asset names. For migration from legacy `0.6.x` updaters, each release also includes an identical three-part-named compatibility ZIP. Both names contain the same verified binaries; use the four-part ZIP for manual installation.
 
 ## Reset credits
 
