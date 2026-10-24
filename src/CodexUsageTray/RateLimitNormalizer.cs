@@ -8,6 +8,7 @@ public static class RateLimitNormalizer
     public static IReadOnlyList<RateLimitBucket> Normalize(JsonElement response)
     {
         var buckets = new List<RateLimitBucket>();
+        if (response.ValueKind != JsonValueKind.Object) return buckets;
         if (response.TryGetProperty("rateLimitsByLimitId", out var byLimitId) &&
             byLimitId.ValueKind == JsonValueKind.Object &&
             byLimitId.EnumerateObject().Any())
@@ -30,6 +31,7 @@ public static class RateLimitNormalizer
 
     public static ResetCreditSummary NormalizeResetCredits(JsonElement response)
     {
+        if (response.ValueKind != JsonValueKind.Object) return new(null, null);
         if (response.TryGetProperty("rateLimitResetCredits", out var credits) &&
             credits.ValueKind == JsonValueKind.Object &&
             credits.TryGetProperty("availableCount", out var countElement) &&
@@ -104,8 +106,10 @@ public static class RateLimitNormalizer
             hasRecognizedShape = true;
             foreach (var item in daily.EnumerateArray())
             {
-                if (!item.TryGetProperty("startDate", out var dateElement) || dateElement.ValueKind != JsonValueKind.String ||
-                    !item.TryGetProperty("tokens", out var tokensElement) || !tokensElement.TryGetInt64(out var tokens))
+                if (item.ValueKind != JsonValueKind.Object ||
+                    !item.TryGetProperty("startDate", out var dateElement) || dateElement.ValueKind != JsonValueKind.String ||
+                    !item.TryGetProperty("tokens", out var tokensElement) || tokensElement.ValueKind != JsonValueKind.Number ||
+                    !tokensElement.TryGetInt64(out var tokens) || tokens < 0)
                 {
                     continue;
                 }
@@ -176,6 +180,7 @@ public static class RateLimitNormalizer
 
     private static void AddSnapshot(List<RateLimitBucket> buckets, string sourceKey, JsonElement snapshot)
     {
+        if (snapshot.ValueKind != JsonValueKind.Object) return;
         var limitId = ReadString(snapshot, "limitId") ?? sourceKey;
         var limitName = ReadString(snapshot, "limitName");
         var reachedType = ReadString(snapshot, "rateLimitReachedType");
@@ -210,7 +215,7 @@ public static class RateLimitNormalizer
                 limitId,
                 slot,
                 used,
-                Math.Clamp(100 - usedRaw, 0, 100),
+                100 - used,
                 duration,
                 resetsAt,
                 localReset,

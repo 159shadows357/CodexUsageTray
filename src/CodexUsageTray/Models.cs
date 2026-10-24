@@ -17,7 +17,15 @@ public enum PopupStyle
 {
     Classic,
     MacOS,
-    Paper
+    Paper,
+    CadraLight,
+    CadraDark
+}
+
+public enum TrayQuotaSource
+{
+    LowestRemaining,
+    Frontier
 }
 
 public enum UpdateMode
@@ -110,6 +118,7 @@ public sealed record ApiEquivalentEstimate
 
 public sealed record UsageSnapshot
 {
+    public TrayQuotaSource TrayQuotaSource { get; init; } = TrayQuotaSource.Frontier;
     public DateTimeOffset UpdatedAt { get; init; } = DateTimeOffset.Now;
     public bool IsLive { get; init; }
     public string? PlanType { get; init; }
@@ -127,7 +136,9 @@ public sealed record UsageSnapshot
     public RateLimitBucket? MostConstrained => Buckets.OrderBy(bucket => bucket.RemainingPercent).FirstOrDefault();
 
     [JsonIgnore]
-    public RateLimitBucket? TrayBucket => SelectTrayBucket(Buckets);
+    public RateLimitBucket? TrayBucket => TrayQuotaSource == TrayQuotaSource.Frontier
+        ? SelectTrayBucket(Buckets)
+        : OrderTrayCandidates(Buckets).FirstOrDefault();
 
     [JsonIgnore]
     public int? TrayRemainingPercent => TrayBucket is { } bucket ? EffectiveRemainingPercent(bucket) : null;
@@ -150,6 +161,8 @@ public sealed record UsageSnapshot
 
 public sealed record AppSettings
 {
+    public TrayQuotaSource TrayQuotaSource { get; init; } = TrayQuotaSource.Frontier;
+    public bool ResetForecastEnabled { get; init; } = true;
     public int RefreshIntervalMinutes { get; init; } = 2;
     public int StaleAfterMinutes { get; init; } = 10;
     public TrayIconStyle TrayIconStyle { get; init; } = TrayIconStyle.Ring;

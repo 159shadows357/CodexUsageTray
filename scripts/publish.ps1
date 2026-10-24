@@ -1,13 +1,14 @@
 [CmdletBinding()]
 param(
     [ValidatePattern('^[0-9A-Za-z][0-9A-Za-z._-]*$')]
-    [string]$Version = '0.6.4',
+    [string]$Version = '2026.10.24.1',
     [string]$RuntimePackSource = 'https://pkgs.dev.azure.com/dnceng/public/_packaging/dotnet-public/nuget/v3/index.json'
 )
 
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
 $root = Split-Path $PSScriptRoot -Parent
+& (Join-Path $PSScriptRoot 'assert-calendar-version.ps1') -Version $Version
 $project = Join-Path $root 'src\CodexUsageTray\CodexUsageTray.csproj'
 $output = Join-Path $root 'artifacts\publish\win-x64'
 New-Item -ItemType Directory -Path $output -Force | Out-Null

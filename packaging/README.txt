@@ -60,3 +60,30 @@ Support
 -------
 Open Buy me a coffee from the tray menu or visit:
 https://ko-fi.com/PongsathonTan
+
+Date versions and compatibility
+-------------------------------
+This release uses year.month.day.patch (2026.10.24.1).
+Use the four-part-named ZIP for manual installation. The three-part-named
+compatibility ZIP contains identical verified binaries for older updaters.
+
+Tibo forecast and themes
+-----------------------
+Cadra Light and Cadra Dark are available alongside all original popup styles.
+The optional Tibo reset forecast uses a free public API with no account data.
+Data: https://codex-reset.com/ (linked by https://tiboreset.com/developers).
+It is a community global-reset prediction, separate from your account quota
+and reset-credit expiry. Missing or old data is labeled unavailable or stale.
+Use Tibo forecast > Show community forecast to disable it.
+
+Plans and estimates
+-------------------
+Plus and other ChatGPT plans display only quota windows returned by Codex.
+Reset credits may be unavailable. API-equivalent estimates use current Standard
+rates (2026-10-24), assume 30-minute cache writes, and are not billed charges.
+
+Tray quota source
+-----------------
+Frontier only is the default. Tray quota source > Lowest remaining bucket
+offers the alternate lowest-quota indicator. Frontier only never substitutes Spark.
+All quota buckets remain accessible in the popup, with pages when needed.

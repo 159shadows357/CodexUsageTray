@@ -7,7 +7,8 @@ public sealed record ProtocolCompatibilityReport(
     string UsageShape,
     List<string> Warnings)
 {
-    public string Status => $"rateLimits={RateLimitShape}; usage={UsageShape}";
+    public string ResetCreditShape { get; init; } = "unavailable";
+    public string Status => $"rateLimits={RateLimitShape}; usage={UsageShape}; resetCredits={ResetCreditShape}";
 }
 
 public static class ProtocolCompatibility
@@ -17,7 +18,18 @@ public static class ProtocolCompatibility
         var warnings = new List<string>();
         var rateLimitShape = InspectRateLimits(limits, warnings);
         var usageShape = InspectUsage(usage, warnings);
-        return new(rateLimitShape, usageShape, warnings);
+        return new(rateLimitShape, usageShape, warnings) { ResetCreditShape = InspectResetCredits(limits) };
+    }
+
+    private static string InspectResetCredits(JsonElement limits)
+    {
+        if (limits.ValueKind != JsonValueKind.Object ||
+            !limits.TryGetProperty("rateLimitResetCredits", out var credits) || credits.ValueKind != JsonValueKind.Object ||
+            !credits.TryGetProperty("availableCount", out var count) || count.ValueKind != JsonValueKind.Number ||
+            !count.TryGetInt64(out _)) return "unavailable";
+        return credits.TryGetProperty("credits", out var details) && details.ValueKind == JsonValueKind.Array
+            ? "details"
+            : "count-only";
     }
 
     private static string InspectRateLimits(JsonElement limits, List<string> warnings)

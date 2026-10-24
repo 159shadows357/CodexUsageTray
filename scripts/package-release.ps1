@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [ValidatePattern('^[0-9A-Za-z][0-9A-Za-z._-]*$')]
-    [string]$Version = '0.6.4',
+    [string]$Version = '2026.10.24.1',
     [string]$RuntimePackSource = 'https://pkgs.dev.azure.com/dnceng/public/_packaging/dotnet-public/nuget/v3/index.json',
     [string]$CodeSigningThumbprint,
     [string]$TimestampServer = 'http://timestamp.digicert.com',
@@ -11,6 +11,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
 $root = Split-Path $PSScriptRoot -Parent
+& (Join-Path $PSScriptRoot 'assert-calendar-version.ps1') -Version $Version
 $appExecutable = Join-Path $root 'artifacts\publish\win-x64\CodexUsageTray.exe'
 $setupProject = Join-Path $root 'src\CodexUsageTray.Setup\CodexUsageTray.Setup.csproj'
 $setupPublish = Join-Path $root 'artifacts\setup-publish\win-x64'
@@ -131,5 +132,13 @@ Set-Content -LiteralPath (Join-Path $stagingDirectory 'SHA256SUMS.txt') -Value $
 Compress-Archive -Path (Join-Path $stagingDirectory '*') -DestinationPath $zipPath -CompressionLevel Optimal
 $zipHash = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash
 Set-Content -LiteralPath $zipHashPath -Value "$zipHash  $([System.IO.Path]::GetFileName($zipPath))" -Encoding ascii
+# Legacy 0.6.x updaters parse four components but select a three-component asset.
+# Publish identical verified bytes under this bridge name for that one-step migration.
+$legacyVersion = ([Version]$Version).ToString(3)
+$legacyZipPath = Join-Path $releaseRoot "CodexUsageTray-$legacyVersion-win-x64.zip"
+Copy-Item -LiteralPath $zipPath -Destination $legacyZipPath -Force
+Set-Content -LiteralPath "$legacyZipPath.sha256" -Value "$zipHash  $([System.IO.Path]::GetFileName($legacyZipPath))" -Encoding ascii
 Write-Output $zipPath
 Write-Output $zipHashPath
+Write-Output $legacyZipPath
+Write-Output "$legacyZipPath.sha256"

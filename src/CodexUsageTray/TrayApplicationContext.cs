@@ -40,18 +40,25 @@ public sealed class TrayApplicationContext : ApplicationContext
     private readonly LocalUsageAnalyzer _localUsageAnalyzer;
     private readonly GitHubReleaseUpdater _updater;
     private readonly OpenAiStatusClient _openAiStatusClient;
+    private readonly ResetForecastClient _resetForecastClient;
+    private readonly ToolStripMenuItem _forecastEnabledItem;
+    private readonly ToolStripMenuItem _resetCreditAvailabilityItem;
     private readonly ResetCreditAutomation _resetCreditAutomation;
     private readonly AdaptiveRefreshPolicy _adaptiveRefreshPolicy = new();
     private readonly Dictionary<TrayIconStyle, ToolStripMenuItem> _iconStyleItems = new();
     private readonly Dictionary<PopupStyle, ToolStripMenuItem> _popupStyleItems = new();
+    private readonly Dictionary<TrayQuotaSource, ToolStripMenuItem> _trayQuotaSourceItems = new();
     private readonly Dictionary<ResetCreditMode, ToolStripMenuItem> _resetCreditModeItems = new();
     private readonly ToolStripMenuItem _resetCreditLeadTimeItem;
     private readonly Dictionary<UpdateMode, ToolStripMenuItem> _updateModeItems = new();
     private CodexAppServerSession? _session;
     private UsageSnapshot _snapshot;
     private OpenAiStatusSnapshot _openAiStatus = new();
+    private ResetForecastSnapshot _resetForecast;
     private DateTimeOffset _nextRefreshAt = DateTimeOffset.Now;
     private DateTimeOffset _nextOpenAiStatusCheckAt = DateTimeOffset.Now;
+    private DateTimeOffset _nextForecastCheckAt = DateTimeOffset.Now;
+    private DateTimeOffset _nextRuntimeCheckAt = DateTimeOffset.Now;
     private DateTimeOffset _nextUpdateCheckAt = DateTimeOffset.MaxValue;
     private int _retryIndex;
     private volatile bool _externalRefreshRequested;
@@ -63,6 +70,7 @@ public sealed class TrayApplicationContext : ApplicationContext
     private Icon? _currentIcon;
     private Task? _activeRefresh;
     private Task? _activeOpenAiStatusRefresh;
+    private Task? _activeForecastRefresh;
     private Task? _activeUpdate;
     private TrayIconVisualKey? _iconVisualKey;
     private TimeSpan? _lastRefreshDelay;
@@ -90,13 +98,17 @@ public sealed class TrayApplicationContext : ApplicationContext
         _localUsageAnalyzer = new LocalUsageAnalyzer(paths.LocalUsageIndex, store);
         _updater = new GitHubReleaseUpdater(paths.Updates);
         _openAiStatusClient = new OpenAiStatusClient();
+        _resetForecast = store.ReadValue<ResetForecastSnapshot>(paths.ForecastCache) is { } cachedForecast
+            ? cachedForecast with { IsLive = false }
+            : new ResetForecastSnapshot();
+        _resetForecastClient = new ResetForecastClient(_resetForecast);
         _resetCreditAutomation = new ResetCreditAutomation(paths.ResetCreditAutomationState, store);
         if (!File.Exists(paths.Settings))
         {
             store.Write(paths.Settings, _settings);
         }
 
-        _snapshot = LoadInitialSnapshot();
+        _snapshot = LoadInitialSnapshot() with { TrayQuotaSource = _settings.TrayQuotaSource };
         _popup = new UsagePopupForm(
             closeOnDeactivate: !pinPopupForSmokeTest,
             popupStyle: _settings.PopupStyle,
@@ -104,6 +116,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         _popup.RefreshRequested += (_, _) => RequestAllRefreshes();
         _popup.UpdateSnapshot(_snapshot);
         _popup.UpdateOpenAiStatus(_openAiStatus);
+        _popup.UpdateResetForecast(_resetForecast, _settings.ResetForecastEnabled);
         _details = new UsageDetailsForm();
         _details.UpdateEstimate(_snapshot.ApiEquivalent);
 
@@ -112,6 +125,16 @@ public sealed class TrayApplicationContext : ApplicationContext
         menu.Items.Add("Open Usage", null, (_, _) => OpenUsage());
         menu.Items.Add("Usage details", null, (_, _) => OpenUsageDetails());
         menu.Items.Add("Refresh now", null, (_, _) => RequestAllRefreshes());
+        var quotaSourceMenu = new ToolStripMenuItem("Tray quota source");
+        foreach (var source in Enum.GetValues<TrayQuotaSource>())
+        {
+            var item = new ToolStripMenuItem(source == TrayQuotaSource.Frontier ? "Frontier only" : "Lowest remaining bucket")
+            { Checked = source == _settings.TrayQuotaSource };
+            item.Click += (_, _) => SetTrayQuotaSource(source);
+            _trayQuotaSourceItems.Add(source, item);
+            quotaSourceMenu.DropDownItems.Add(item);
+        }
+        menu.Items.Add(quotaSourceMenu);
         var openAiStatusMenu = new ToolStripMenuItem("OpenAI status");
         _codexStatusItem = new ToolStripMenuItem("Codex: Checking...");
         _codexStatusItem.Click += (_, _) => OpenLink(AppLinks.OpenAiStatus, "Open OpenAI status");
@@ -155,6 +178,9 @@ public sealed class TrayApplicationContext : ApplicationContext
         UpdatePopupStyleChecks();
         menu.Items.Add(popupStyleMenu);
         var resetCreditsMenu = new ToolStripMenuItem("Reset credits");
+        _resetCreditAvailabilityItem = new ToolStripMenuItem { Enabled = false };
+        resetCreditsMenu.DropDownItems.Add(_resetCreditAvailabilityItem);
+        resetCreditsMenu.DropDownItems.Add(new ToolStripSeparator());
         foreach (var mode in Enum.GetValues<ResetCreditMode>())
         {
             var modeItem = new ToolStripMenuItem(ResetCreditModeText(mode));
@@ -169,6 +195,15 @@ public sealed class TrayApplicationContext : ApplicationContext
         UpdateResetCreditModeChecks();
         UpdateResetCreditLeadTimeText();
         menu.Items.Add(resetCreditsMenu);
+        UpdateResetCreditAvailability();
+        var forecastMenu = new ToolStripMenuItem("Tibo forecast");
+        _forecastEnabledItem = new ToolStripMenuItem("Show community forecast") { Checked = _settings.ResetForecastEnabled };
+        _forecastEnabledItem.Click += (_, _) => SetForecastEnabled(!_settings.ResetForecastEnabled);
+        forecastMenu.DropDownItems.Add(_forecastEnabledItem);
+        forecastMenu.DropDownItems.Add("Refresh forecast", null, (_, _) => _nextForecastCheckAt = DateTimeOffset.Now);
+        forecastMenu.DropDownItems.Add("Open Tibo Reset", null, (_, _) => OpenLink("https://tiboreset.com/", "Open Tibo Reset"));
+        forecastMenu.DropDownItems.Add("Data: codex-reset.com", null, (_, _) => OpenLink("https://codex-reset.com/", "Open forecast source"));
+        menu.Items.Add(forecastMenu);
         var updatesMenu = new ToolStripMenuItem("Updates");
         updatesMenu.DropDownItems.Add("Check now", null, async (_, _) => await CheckForUpdatesAsync(interactive: true));
         updatesMenu.DropDownItems.Add(new ToolStripSeparator());
@@ -308,6 +343,19 @@ public sealed class TrayApplicationContext : ApplicationContext
             UpdateTray();
         }
 
+        if (_popup.Visible && _settings.ResetForecastEnabled)
+        {
+            _popup.RefreshForecastFreshness(DateTimeOffset.UtcNow);
+        }
+
+        if (!_exiting &&
+            _settings.ResetForecastEnabled &&
+            DateTimeOffset.Now >= _nextForecastCheckAt &&
+            (_activeForecastRefresh is null || _activeForecastRefresh.IsCompleted))
+        {
+            _activeForecastRefresh = RefreshForecastAsync();
+        }
+
         if (!_exiting &&
             DateTimeOffset.Now >= _nextOpenAiStatusCheckAt &&
             (_activeOpenAiStatusRefresh is null || _activeOpenAiStatusRefresh.IsCompleted))
@@ -340,9 +388,42 @@ public sealed class TrayApplicationContext : ApplicationContext
     {
         RequestRefresh();
         RequestOpenAiStatusRefresh();
+        _nextForecastCheckAt = DateTimeOffset.Now;
     }
 
     private void RequestOpenAiStatusRefresh() => _nextOpenAiStatusCheckAt = DateTimeOffset.Now;
+
+    private void SetForecastEnabled(bool enabled)
+    {
+        _settings = _settings with { ResetForecastEnabled = enabled };
+        _store.Write(_paths.Settings, _settings);
+        _forecastEnabledItem.Checked = enabled;
+        _popup.UpdateResetForecast(_resetForecast, enabled);
+        if (enabled) _nextForecastCheckAt = DateTimeOffset.Now;
+    }
+
+    private async Task RefreshForecastAsync()
+    {
+        _nextForecastCheckAt = DateTimeOffset.Now.AddMinutes(5);
+        try
+        {
+            _resetForecast = await _resetForecastClient.ReadAsync(_shutdown.Token);
+            _popup.UpdateResetForecast(_resetForecast, _settings.ResetForecastEnabled);
+            try { _store.Write(_paths.ForecastCache, _resetForecast); }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                _logger.Error($"Could not save public reset forecast: {error.Message}");
+            }
+            _logger.Info($"Tibo forecast refreshed: live={_resetForecast.IsLive}; stale={_resetForecast.IsStale(DateTimeOffset.Now)}.");
+        }
+        catch (OperationCanceledException) when (_shutdown.IsCancellationRequested) { }
+        catch (Exception error)
+        {
+            _logger.Error($"Tibo forecast unavailable: {SecretSanitizer.Sanitize(error.Message)}");
+            _resetForecast = _resetForecast with { IsLive = false, Error = "Forecast unavailable" };
+            _popup.UpdateResetForecast(_resetForecast, _settings.ResetForecastEnabled);
+        }
+    }
 
     private async Task RefreshOpenAiStatusAsync()
     {
@@ -384,6 +465,15 @@ public sealed class TrayApplicationContext : ApplicationContext
 
         try
         {
+            if (_session is { IsRunning: true } && DateTimeOffset.Now >= _nextRuntimeCheckAt)
+            {
+                _nextRuntimeCheckAt = DateTimeOffset.Now.AddMinutes(5);
+                if (await _session.PreferredExecutableChangedAsync(_shutdown.Token))
+                {
+                    _logger.Info("Codex runtime changed; reconnecting the tray-owned app-server.");
+                    await DisposeSessionAsync();
+                }
+            }
             if (_session is null || !_session.IsRunning)
             {
                 await DisposeSessionAsync();
@@ -391,6 +481,7 @@ public sealed class TrayApplicationContext : ApplicationContext
                 _session.AccountDataChanged += OnAccountDataChanged;
                 _session.ProcessExited += OnProcessExited;
                 await _session.StartAsync(_shutdown.Token);
+                _nextRuntimeCheckAt = DateTimeOffset.Now.AddMinutes(5);
             }
 
             var live = await _session.ReadSnapshotAsync(_shutdown.Token);
@@ -623,9 +714,11 @@ public sealed class TrayApplicationContext : ApplicationContext
 
     private void SetSnapshot(UsageSnapshot snapshot)
     {
+        snapshot = snapshot with { TrayQuotaSource = _settings.TrayQuotaSource };
         _snapshot = snapshot;
         _popup.UpdateSnapshot(snapshot);
         _details.UpdateEstimate(snapshot.ApiEquivalent);
+        UpdateResetCreditAvailability();
         UpdateTray();
     }
 
@@ -814,6 +907,24 @@ public sealed class TrayApplicationContext : ApplicationContext
         }
     }
 
+    private void SetTrayQuotaSource(TrayQuotaSource source)
+    {
+        if (_settings.TrayQuotaSource == source) return;
+        var next = _settings with { TrayQuotaSource = source };
+        try
+        {
+            _store.Write(_paths.Settings, next);
+            _settings = next;
+            foreach (var (candidate, item) in _trayQuotaSourceItems) item.Checked = candidate == source;
+            SetSnapshot(_snapshot);
+            _logger.Info($"Tray quota source changed to {source}.");
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            MessageBox.Show(SecretSanitizer.Sanitize(error.Message), "Tray quota source", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
     private void UpdateIconStyleChecks()
     {
         foreach (var (style, item) in _iconStyleItems)
@@ -827,7 +938,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         TrayIconStyle.Ring => "Ring",
         TrayIconStyle.SolidBar => "Solid bar",
         TrayIconStyle.SegmentedBar => "Segmented bar",
-        TrayIconStyle.CodexPercent => "Number only (Frontier)",
+        TrayIconStyle.CodexPercent => "Number only",
         _ => style.ToString()
     };
 
@@ -862,8 +973,21 @@ public sealed class TrayApplicationContext : ApplicationContext
         PopupStyle.Classic => "Classic",
         PopupStyle.MacOS => "macOS style",
         PopupStyle.Paper => "Paper style",
+        PopupStyle.CadraLight => "Cadra Light",
+        PopupStyle.CadraDark => "Cadra Dark",
         _ => style.ToString()
     };
+
+    private void UpdateResetCreditAvailability()
+    {
+        _resetCreditAvailabilityItem.Text = _snapshot.ResetCreditsAvailable is null
+            ? "Credits unavailable for this account"
+            : _snapshot.ResetCreditsAvailable == 0
+                ? "No available reset credits"
+                : _snapshot.ResetCredits is null
+                    ? $"{_snapshot.ResetCreditsAvailable} available; expiry details unavailable"
+                    : $"{_snapshot.ResetCreditsAvailable} available; {_snapshot.ResetCredits.Count} detail row(s)";
+    }
 
     private void SetResetCreditMode(ResetCreditMode mode)
     {
@@ -1142,7 +1266,10 @@ public sealed class TrayApplicationContext : ApplicationContext
             OpenAI ChatGPT status: {_openAiStatus.ChatGpt}
             OpenAI status checked: {_openAiStatus.CheckedAt:O}; live={_openAiStatus.IsLive}
             Tray icon style: {_settings.TrayIconStyle}
+            Tray quota source: {_settings.TrayQuotaSource}
             Popup style: {_settings.PopupStyle}
+            Tibo forecast: enabled={_settings.ResetForecastEnabled}; live={_resetForecast.IsLive}; stale={_resetForecast.IsStale(DateTimeOffset.Now)}
+            Tibo data updated: {_resetForecast.UpdatedAt?.ToString("O") ?? "unavailable"}
             Reset credit mode: {_settings.ResetCreditMode}
             Reset credit lead time: {_settings.ResetCreditLeadTimeMinutes} minute(s)
             Reset credits: {_snapshot.ResetCreditsAvailable?.ToString() ?? "unavailable"}
@@ -1186,6 +1313,8 @@ public sealed class TrayApplicationContext : ApplicationContext
         if (eventArgs.Mode == PowerModes.Resume)
         {
             _externalRefreshRequested = true;
+            _nextRuntimeCheckAt = DateTimeOffset.Now;
+            _nextForecastCheckAt = DateTimeOffset.Now;
             RequestOpenAiStatusRefresh();
         }
     }
@@ -1222,6 +1351,10 @@ public sealed class TrayApplicationContext : ApplicationContext
         {
             try { await _activeOpenAiStatusRefresh; } catch { }
         }
+        if (_activeForecastRefresh is not null)
+        {
+            try { await _activeForecastRefresh; } catch { }
+        }
         try { await DisposeSessionAsync(); } catch { }
         _trayIcon.Icon = null;
         _trayIcon.Visible = false;
@@ -1236,6 +1369,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         _updateGate.Dispose();
         _updater.Dispose();
         _openAiStatusClient.Dispose();
+        _resetForecastClient.Dispose();
         _shutdown.Dispose();
         _logger.Info("Codex Usage Tray stopped.");
         base.ExitThreadCore();

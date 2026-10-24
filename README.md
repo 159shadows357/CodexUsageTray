@@ -9,11 +9,11 @@ This personal project is unofficial and is not affiliated with OpenAI.
 ## Features
 
 - Runs as a `WinExe` without a console window.
-- Tray icon styles: `Ring`, `Solid bar`, `Segmented bar`, and `Number only (Frontier)`.
-- Usage popup styles: `Classic`, `macOS style`, and `Paper style`.
+- Tray icon styles: `Ring`, `Solid bar`, `Segmented bar`, and `Number only`.
+- Usage popup styles: `Classic`, `macOS style`, `Paper style`, `Cadra Light`, and `Cadra Dark`.
 - Dark Windows 11-style right-click menu.
 - Displays every rate-limit bucket returned by the server.
-- Uses only the Frontier bucket (`limitId=codex`) for the tray indicator; Spark and other buckets remain visible in the popup.
+- Uses `Frontier only` (`limitId=codex`) for the tray by default; `Tray quota source` also offers `Lowest remaining bucket`. Every server bucket remains available in the popup.
 - Supports Weekly-only accounts, `rateLimitsByLimitId`, fallback `rateLimits`, `primary`, and `secondary`.
 - Displays reset-credit counts, exact local expiry times, and token activity when the installed Codex version provides them.
 - Provides opt-in reset-credit expiry notification or automatic use with a configurable lead time (6 hours by default).
@@ -38,7 +38,7 @@ The published package is self-contained. Target machines do not need a separate 
 
 ## Install
 
-Download the latest `CodexUsageTray-X.Y.Z-win-x64.zip` from [GitHub Releases](https://github.com/159shadows357/CodexUsageTray/releases), extract every file, and run:
+Download the latest `CodexUsageTray-year.month.day.patch-win-x64.zip` from [GitHub Releases](https://github.com/159shadows357/CodexUsageTray/releases), extract every file, and run:
 
 ```powershell
 .\CodexUsageTray-Setup.exe
@@ -74,7 +74,7 @@ pwsh -File .\scripts\test.ps1
 dotnet format .\CodexUsageTray.slnx --verify-no-changes --no-restore
 ```
 
-The test project uses a package-free runner. The current suite contains 73 tests.
+The test project uses a package-free runner. The current suite contains 140 tests.
 
 Run from source:
 
@@ -85,21 +85,21 @@ dotnet run --project .\src\CodexUsageTray\CodexUsageTray.csproj -c Release
 Publish the application:
 
 ```powershell
-pwsh -File .\scripts\publish.ps1 -Version 0.6.4
+pwsh -File .\scripts\publish.ps1 -Version 2026.10.24.1
 ```
 
 Create the installer ZIP:
 
 ```powershell
-pwsh -File .\scripts\package-release.ps1 -Version 0.6.4
+pwsh -File .\scripts\package-release.ps1 -Version 2026.10.24.1
 ```
 
 Output:
 
 ```text
 artifacts\publish\win-x64\CodexUsageTray.exe
-artifacts\release\CodexUsageTray-0.6.4-win-x64.zip
-artifacts\release\CodexUsageTray-0.6.4-win-x64.zip.sha256
+artifacts\release\CodexUsageTray-2026.10.24.1-win-x64.zip
+artifacts\release\CodexUsageTray-2026.10.24.1-win-x64.zip.sha256
 ```
 
 The ZIP contains `CodexUsageTray-Setup.exe`, `CodexUsageTray.exe`, `README.txt`, `LICENSE.txt`, and `SHA256SUMS.txt`.
@@ -113,7 +113,7 @@ $thumbprint = Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert |
   Where-Object HasPrivateKey |
   Select-Object -First 1 -ExpandProperty Thumbprint
 pwsh -File .\scripts\package-release.ps1 `
-  -Version 0.6.4 `
+  -Version 2026.10.24.1 `
   -CodeSigningThumbprint $thumbprint
 ```
 
@@ -126,9 +126,9 @@ Open `Tray icon style` from the right-click menu:
 - `Ring`: default quota ring without a number.
 - `Solid bar`: continuous fill gauge.
 - `Segmented bar`: four-segment gauge.
-- `Number only (Frontier)`: remaining Frontier percentage without the `%` character, label, frame, or card.
+- `Number only`: remaining percentage for the selected source without the `%` character, label, frame, or card.
 
-Every tray style uses the server bucket whose exact `limitId` is `codex`. If that Frontier bucket is unavailable, the tray shows an unavailable state instead of substituting Spark. The exact Frontier percentage and reset time remain available in the tooltip.
+Every tray style follows `Tray quota source`: `Frontier only` is the default and requires the exact `limitId=codex` bucket and shows unavailable if it is missing, without substituting Spark. The tooltip and first popup quota card identify the selected source and its exact percentage and reset time.
 
 ## Popup styles
 
@@ -137,9 +137,24 @@ Open `Popup style` from the right-click menu:
 - `Classic`: compact dark layout.
 - `macOS style`: blue dark background, rounded cards, progress bars, account, and token activity.
 - `Paper style`: light paper background, offset shadow, monospace values, and dark progress bars.
+- `Cadra Light` / `Cadra Dark`: native WinForms cards using neutral surfaces and an Ocean accent, guided by the local derived Cadra UI reference. Existing styles remain selectable. When many quota buckets exceed the available desktop space, Previous/Next controls show every bucket across pages without a scrollbar. Forecast freshness is checked every second while the popup is visible.
 
 The popup displays only the buckets and optional data returned by the server. It does not invent a 5-hour bucket or reset-credit details.
 Every popup style includes `Refresh` and `Close`. You can also close it with `Esc`, an outside click, or a second left-click on the tray icon.
+
+## Tibo reset forecast
+
+The popup can show an independent community forecast for a global Codex reset within 24 and 48 hours, its confidence, last reported reset, and data age. This is separate from your account's exact quota reset and your reset-credit expiry. A community report does not prove that your account received a reset.
+
+The tray uses the free, keyless `https://codex-reset.com/api/forecast` API linked by [Tibo Reset](https://tiboreset.com/developers). It sends a project User-Agent, no account identifier or Authorization header, and shows **Data: codex-reset.com** with a source link. Forecast checks normally run every five minutes. Manual refresh and concurrent requests share a minimum one-minute interval, with Retry-After and backoff on failures. The menu can disable the forecast.
+
+On failure, the last good forecast remains marked stale; missing probabilities remain unavailable. Data older than 15 minutes is stale; a provider publication expiry can mark it stale sooner. Forecast data never changes your quota icon or redeems a reset credit.
+
+## ChatGPT Plus and date versions
+
+Plus, Pro, and other signed-in ChatGPT plans use the rate-limit buckets actually returned by the local app-server. Plus can return a five-hour window and a weekly window; the app does not manufacture either window, a reset credit, or a fixed message allowance. A missing optional token-activity endpoint does not prevent quota updates. The tray checks for a changed Codex runtime every five minutes and after resume, respecting explicit CLI overrides and restarting only its own app-server child.
+
+Releases use **year.month.day.patch**, for example `2026.10.24.1` (the first release that day). All four parts are preserved in metadata, tags and canonical asset names. For migration from legacy `0.6.x` updaters, each release also includes an identical three-part-named compatibility ZIP. Both names contain the same verified binaries; use the four-part ZIP for manual installation.
 
 ## Reset credits
 
@@ -168,7 +183,7 @@ estimated USD =
   + output × output rate
 ```
 
-`gpt-5.3-codex-spark` uses the published `gpt-5.3-codex` rate as a proxy while Spark has no separate public price. Unknown models stay `unpriced` and are not added to the estimate.
+`gpt-5.3-codex-spark` uses the published `gpt-5.3-codex` rate as a proxy while Spark has no separate public price. Unknown models stay `unpriced` and are not added to the estimate. The catalog includes the GPT-6/6.1 family and uses Standard API rates checked on 2026-10-24. Cache writes assume 30-minute retention because local counters do not identify retention; 12-hour writes can cost more. GPT-5.6 Sol uses the published promotional rate, available at least through 2026-11-21. The incremental index rebuilds when the pricing/parser fingerprint changes.
 
 The application reads `%USERPROFILE%\.codex\sessions\**\*.jsonl` in read-only mode and uses only `cwd`, model, timestamp, and token counters. It does not read prompts, responses, or `auth.json`.
 
@@ -201,7 +216,7 @@ Update and download requests do not send an `Authorization` header. Target machi
 
 Before installation, the updater verifies:
 
-1. Exact asset name `CodexUsageTray-X.Y.Z-win-x64.zip`.
+1. Exact asset name `CodexUsageTray-year.month.day.patch-win-x64.zip`.
 2. GitHub `asset.digest` SHA-256.
 3. Download and extracted size limits.
 4. Normalized ZIP paths to prevent path traversal.

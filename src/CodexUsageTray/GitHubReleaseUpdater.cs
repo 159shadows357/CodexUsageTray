@@ -493,7 +493,9 @@ internal sealed partial class GitHubReleaseUpdater : IDisposable
          uri.Host.EndsWith(".githubusercontent.com", StringComparison.OrdinalIgnoreCase));
     private static bool IsValidSha256Digest(string? digest) =>
         digest is not null && Sha256DigestRegex().IsMatch(digest);
-    private static string FormatVersion(Version version) => $"{version.Major}.{version.Minor}.{version.Build}";
+    internal static string FormatVersion(Version version) => version.Revision >= 0
+        ? version.ToString(4)
+        : version.ToString(3);
 
     public void Dispose()
     {

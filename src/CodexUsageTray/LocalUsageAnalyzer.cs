@@ -29,7 +29,7 @@ public readonly record struct ApiCostCalculation(
 
 public static class ApiCostEstimator
 {
-    public const string PricingReferenceDate = "2026-07-21";
+    public const string PricingReferenceDate = "2026-10-24";
     private const decimal TokensPerMillion = 1_000_000m;
     private const long LongContextThreshold = 272_000;
 
@@ -72,39 +72,26 @@ public static class ApiCostEstimator
             return false;
         }
 
-        var normalized = model.Trim().ToLowerInvariant();
-        if (normalized.StartsWith("gpt-5.6-terra", StringComparison.Ordinal))
+        // Standard rates: https://developers.openai.com/api/docs/pricing
+        // Session counters do not identify the cache retention period, so writes use 30-minute rates.
+        // Match documented names exactly: a future variant must remain unpriced until reviewed.
+        var resolved = model.Trim().ToLowerInvariant() switch
         {
-            pricing = new(2.50m, 0.25m, 15m, 1.25m, true, false);
-            return true;
-        }
-        if (normalized.StartsWith("gpt-5.6-luna", StringComparison.Ordinal))
-        {
-            pricing = new(1m, 0.10m, 6m, 1.25m, true, false);
-            return true;
-        }
-        if (normalized is "gpt-5.6" || normalized.StartsWith("gpt-5.6-sol", StringComparison.Ordinal))
-        {
-            pricing = new(5m, 0.50m, 30m, 1.25m, true, false);
-            return true;
-        }
-        if (normalized.StartsWith("gpt-5.5", StringComparison.Ordinal))
-        {
-            pricing = new(5m, 0.50m, 30m, 1m, true, false);
-            return true;
-        }
-        if (normalized.StartsWith("gpt-5.3-codex-spark", StringComparison.Ordinal))
-        {
-            pricing = new(1.75m, 0.175m, 14m, 1m, false, true);
-            return true;
-        }
-        if (normalized.StartsWith("gpt-5.3-codex", StringComparison.Ordinal))
-        {
-            pricing = new(1.75m, 0.175m, 14m, 1m, false, false);
-            return true;
-        }
-
-        return false;
+            "gpt-6.1-sol" => new ModelPricing(2m, 0.10m, 10m, 1.25m, true, false),
+            "gpt-6-sol" => new ModelPricing(2m, 0.20m, 10m, 1.25m, true, false),
+            "gpt-6-astra" => new ModelPricing(10m, 1m, 50m, 1.25m, true, false),
+            "gpt-6-luna" => new ModelPricing(0.10m, 0.01m, 0.50m, 1.25m, true, false),
+            "gpt-5.6-terra" => new ModelPricing(2m, 0.20m, 12m, 1.25m, true, false),
+            "gpt-5.6-luna" => new ModelPricing(0.20m, 0.02m, 1.20m, 1.25m, true, false),
+            "gpt-5.6-sol" => new ModelPricing(4m, 0.40m, 20m, 1.25m, true, false),
+            "gpt-5.5" or "gpt-5.5-2026-04-23" => new ModelPricing(5m, 0.50m, 30m, 1m, true, false),
+            "gpt-5.3-codex-spark" => new ModelPricing(1.75m, 0.175m, 14m, 1m, false, true),
+            "gpt-5.3-codex" => new ModelPricing(1.75m, 0.175m, 14m, 1m, false, false),
+            _ => (ModelPricing?)null
+        };
+        if (resolved is not { } knownPricing) return false;
+        pricing = knownPricing;
+        return true;
     }
 
     private readonly record struct ModelPricing(
@@ -119,6 +106,8 @@ public static class ApiCostEstimator
 public sealed class LocalUsageAnalyzer
 {
     private const int IndexVersion = 1;
+    // Rebuild precomputed session contributions after parser or pricing changes.
+    private const string CalculationVersion = "2:" + ApiCostEstimator.PricingReferenceDate;
     private readonly Dictionary<string, ProjectIdentity> _projectCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, LocalUsageIndexEntry> _sessionCache = new(StringComparer.Ordinal);
     private readonly string? _indexPath;
@@ -366,7 +355,7 @@ public sealed class LocalUsageAnalyzer
         }
 
         var index = _store.ReadValue<LocalUsageIndex>(_indexPath);
-        if (index is null || index.Version != IndexVersion)
+        if (index is null || index.Version != IndexVersion || index.CalculationVersion != CalculationVersion)
         {
             return;
         }
@@ -392,6 +381,7 @@ public sealed class LocalUsageAnalyzer
             _store.Write(_indexPath, new LocalUsageIndex
             {
                 Version = IndexVersion,
+                CalculationVersion = CalculationVersion,
                 Sessions = _sessionCache.Values.OrderBy(entry => entry.Key, StringComparer.Ordinal).ToList()
             });
         }
@@ -698,5 +688,6 @@ internal sealed record LocalUsageIndexEntry(
 internal sealed record LocalUsageIndex
 {
     public int Version { get; init; }
+    public string? CalculationVersion { get; init; }
     public List<LocalUsageIndexEntry> Sessions { get; init; } = [];
 }

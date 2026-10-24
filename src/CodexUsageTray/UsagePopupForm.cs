@@ -5,7 +5,7 @@ using System.Runtime.InteropServices;
 
 namespace CodexUsageTray;
 
-public sealed class UsagePopupForm : Form
+public sealed partial class UsagePopupForm : Form
 {
     private const int WmSetRedraw = 0x000B;
     private const uint RdwInvalidate = 0x0001;
@@ -60,7 +60,7 @@ public sealed class UsagePopupForm : Form
             Dock = DockStyle.Fill,
             FlowDirection = FlowDirection.TopDown,
             WrapContents = false,
-            AutoScroll = true,
+            AutoScroll = false,
             AccessibleName = "Usage details"
         };
         Controls.Add(_content);
@@ -88,9 +88,13 @@ public sealed class UsagePopupForm : Form
         }
     }
 
-    public void UpdateSnapshot(UsageSnapshot snapshot)
+    public void UpdateSnapshot(UsageSnapshot snapshot) => RenderSnapshot(snapshot, DateTimeOffset.UtcNow);
+
+    private void RenderSnapshot(UsageSnapshot snapshot, DateTimeOffset now)
     {
         _snapshot = snapshot;
+        _forecastFreshnessState = ForecastFreshnessState(now);
+        var displaySnapshot = snapshot with { Buckets = PopupBuckets(snapshot).ToList() };
         var suppressRedraw = Visible && IsHandleCreated;
         if (suppressRedraw) SetRedraw(false);
         try
@@ -102,17 +106,33 @@ public sealed class UsagePopupForm : Form
                 ClearContent();
                 ApplyVisualStyle();
 
-                if (_popupStyle == PopupStyle.MacOS)
+                if (IsCadraStyle || DeviceDpi != 96)
                 {
-                    RenderMacStyle(snapshot);
+                    RenderDashboardStyle(displaySnapshot, !IsCadraStyle);
+                }
+                else if (_popupStyle == PopupStyle.MacOS)
+                {
+                    RenderMacStyle(displaySnapshot);
                 }
                 else if (_popupStyle == PopupStyle.Paper)
                 {
-                    RenderPaperStyle(snapshot);
+                    RenderPaperStyle(displaySnapshot);
                 }
                 else
                 {
-                    RenderClassicStyle(snapshot);
+                    RenderClassicStyle(displaySnapshot);
+                }
+
+                AddResetForecast();
+                if (IsCadraStyle || _compactLayout) AddDashboardFooter(displaySnapshot);
+
+                if (DesiredContentHeight() > MaximumPopupHeight())
+                {
+                    ClearContent();
+                    ApplyCompactLayout();
+                    RenderDashboardStyle(displaySnapshot, true);
+                    AddResetForecast();
+                    AddDashboardFooter(displaySnapshot);
                 }
             }
             finally
@@ -121,18 +141,7 @@ public sealed class UsagePopupForm : Form
                 ResumeLayout(true);
             }
 
-            if (_popupStyle == PopupStyle.MacOS)
-            {
-                FitMacWindowToContent();
-            }
-            else if (_popupStyle == PopupStyle.Paper)
-            {
-                FitPaperWindowToContent();
-            }
-            else
-            {
-                FitClassicWindowToContent();
-            }
+            FitWindowToContent();
 
             if (Visible) PositionNearTray();
         }
@@ -154,6 +163,19 @@ public sealed class UsagePopupForm : Form
     {
         _openAiStatus = status;
         UpdateSnapshot(_snapshot);
+    }
+
+    internal void UpdateResetForecast(ResetForecastSnapshot snapshot, bool enabled = true)
+    {
+        _resetForecast = snapshot;
+        _resetForecastEnabled = enabled;
+        UpdateSnapshot(_snapshot);
+    }
+
+    internal void RefreshForecastFreshness(DateTimeOffset now)
+    {
+        if (!_resetForecastEnabled || ForecastFreshnessState(now) == _forecastFreshnessState) return;
+        RenderSnapshot(_snapshot, now);
     }
 
     public void ShowNearTray()
@@ -211,13 +233,13 @@ public sealed class UsagePopupForm : Form
     protected override void OnPaint(PaintEventArgs e)
     {
         base.OnPaint(e);
-        if (_popupStyle != PopupStyle.MacOS) return;
+        if (_popupStyle != PopupStyle.MacOS && !IsCadraStyle) return;
 
         e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
         using var path = RoundedPanel.CreateRoundedRectangle(
             new Rectangle(1, 1, Math.Max(1, ClientSize.Width - 3), Math.Max(1, ClientSize.Height - 3)),
             22);
-        using var pen = new Pen(Color.FromArgb(31, 105, 153), 1.5f);
+        using var pen = new Pen(IsCadraStyle ? DashboardPalette.Line : Color.FromArgb(31, 105, 153), 1.5f);
         e.Graphics.DrawPath(pen, path);
     }
 
@@ -227,9 +249,22 @@ public sealed class UsagePopupForm : Form
         UpdateWindowRegion();
     }
 
+    protected override void OnDpiChanged(DpiChangedEventArgs e)
+    {
+        base.OnDpiChanged(e);
+        UpdateSnapshot(_snapshot);
+        if (Visible) PositionNearTray();
+    }
+
     private void ApplyVisualStyle()
     {
-        if (_popupStyle == PopupStyle.MacOS)
+        _compactLayout = false;
+        _denseLayout = false;
+        if (IsCadraStyle || DeviceDpi != 96)
+        {
+            ApplyCompactLayout();
+        }
+        else if (_popupStyle == PopupStyle.MacOS)
         {
             BackColor = MacBackground;
             _content.BackColor = MacBackground;
@@ -260,49 +295,26 @@ public sealed class UsagePopupForm : Form
         UpdateWindowRegion();
     }
 
-    private void FitMacWindowToContent()
+    private void FitWindowToContent()
     {
-        var contentHeight = _content.Controls.Cast<Control>()
-            .Sum(control => control.Height + control.Margin.Vertical);
-        var screen = Visible ? Screen.FromControl(this) : Screen.FromPoint(Cursor.Position);
-        var maxHeight = Math.Max(360, screen.WorkingArea.Height - 16);
-        var desiredHeight = contentHeight + Padding.Vertical + 2;
-        var targetHeight = Math.Min(desiredHeight, maxHeight);
         _content.AutoScroll = false;
-        ClientSize = new Size(430, targetHeight);
+        ClientSize = new Size(ClientSize.Width, Math.Min(DesiredContentHeight(), MaximumPopupHeight()));
         _content.PerformLayout();
     }
 
-    private void FitPaperWindowToContent()
-    {
-        var contentHeight = _content.Controls.Cast<Control>()
-            .Sum(control => control.Height + control.Margin.Vertical);
-        var screen = Visible ? Screen.FromControl(this) : Screen.FromPoint(Cursor.Position);
-        var maxHeight = Math.Max(360, screen.WorkingArea.Height - 16);
-        var desiredHeight = contentHeight + _content.Padding.Vertical + Padding.Vertical + 2;
-        var targetHeight = Math.Min(desiredHeight, maxHeight);
-        _content.AutoScroll = false;
-        ClientSize = new Size(430, targetHeight);
-        _content.PerformLayout();
-    }
+    private int DesiredContentHeight() => _content.Controls.Cast<Control>()
+        .Sum(control => control.Height + control.Margin.Vertical) + _content.Padding.Vertical + Padding.Vertical + 2;
 
-    private void FitClassicWindowToContent()
+    private int MaximumPopupHeight()
     {
-        var contentHeight = _content.Controls.Cast<Control>()
-            .Sum(control => control.Height + control.Margin.Vertical);
         var screen = Visible ? Screen.FromControl(this) : Screen.FromPoint(Cursor.Position);
-        var maxHeight = Math.Max(360, screen.WorkingArea.Height - 16);
-        var desiredHeight = contentHeight + Padding.Vertical + 2;
-        var targetHeight = Math.Min(desiredHeight, maxHeight);
-        _content.AutoScroll = false;
-        ClientSize = new Size(400, targetHeight);
-        _content.PerformLayout();
+        return Math.Max(300, Math.Min(ScaleUi(1000), screen.WorkingArea.Height - 16));
     }
 
     private void UpdateWindowRegion()
     {
         Region? next = null;
-        if (_popupStyle == PopupStyle.MacOS && ClientSize.Width > 1 && ClientSize.Height > 1)
+        if ((_popupStyle == PopupStyle.MacOS || IsCadraStyle) && ClientSize.Width > 1 && ClientSize.Height > 1)
         {
             using var path = RoundedPanel.CreateRoundedRectangle(ClientRectangle, 24);
             next = new Region(path);
@@ -1523,13 +1535,15 @@ public sealed class UsagePopupForm : Form
         {
             sourceName = bucket.LimitId ?? "Rate limit";
         }
-        return $"{window} · {sourceName}";
+        return isTrayBucket ? $"Tray · {window} · {sourceName}" : $"{window} · {sourceName}";
     }
 
     private static IEnumerable<RateLimitBucket> PopupBuckets(UsageSnapshot snapshot)
     {
         var trayKey = snapshot.TrayBucket?.Key;
-        return snapshot.Buckets.OrderBy(bucket => bucket.Key == trayKey ? 0 : 1);
+        return snapshot.Buckets
+            .OrderBy(bucket => bucket.Key == trayKey ? 0 : 1)
+            .ThenBy(bucket => UsageSnapshot.IsFrontierBucket(bucket) ? 0 : 1);
     }
 
     private static string FormatCompactNumber(long? value)

@@ -21,9 +21,11 @@ Use the existing project structure and built-in .NET APIs. Do not add a NuGet pa
 - Support `rateLimitsByLimitId` and fallback `rateLimits`, including `primary` and `secondary`.
 - Display only buckets returned by the server. Never invent a 5-hour bucket.
 - Calculate `remainingPercent = clamp(100 - usedPercent, 0, 100)`.
-- Use the exact Frontier bucket (`limitId = codex`, case-insensitive) for the tray icon and show every bucket in the popup.
-- Never substitute a Spark-specific bucket when the Frontier bucket is unavailable; show the tray value as unavailable instead.
+- Default `Tray quota source` to `Frontier only` as explicitly selected by the user. Keep `Lowest remaining bucket` available and persist the choice. Show every bucket in the popup (use pages when needed, never scrollbars).
+- In `Frontier only`, require exact `limitId = codex` (case-insensitive); never substitute Spark when unavailable. The icon, tooltip and first popup quota card must identify the same selected source.
 - Treat optional or unknown account/usage fields as unavailable and keep the application running.
+- Support ChatGPT Plus and other plans from server-returned windows; never infer entitlement, fixed allowances, or reset-credit availability from the plan name.
+- Keep Tibo community forecasts separate from account quota and credit actions. Use the free public codex-reset.com API with project User-Agent, attribution, at least one minute between requests, and stale/unavailable states.
 - Read local session JSONL in read-only mode only for `cwd`, model, timestamp, and token counters.
 - Never read Codex authentication files or store prompts/responses.
 
@@ -42,7 +44,7 @@ Use the existing project structure and built-in .NET APIs. Do not add a NuGet pa
 - Repository: `159shadows357/CodexUsageTray`.
 - Updates use the public GitHub Releases API without an `Authorization` header.
 - Keep update modes `Off`, `NotifyOnly`, and `Automatic`; default remains `Off`.
-- Select the exact asset `CodexUsageTray-X.Y.Z-win-x64.zip`.
+- Select the exact canonical asset `CodexUsageTray-year.month.day.patch-win-x64.zip`. Publish an identical three-part-named compatibility ZIP for legacy 0.6.x updaters that discard the fourth part.
 - Require GitHub `asset.digest` SHA-256, size limits, HTTPS GitHub redirect allowlist, safe normalized ZIP paths, and internal `SHA256SUMS.txt`.
 - Automatic installation remains opt-in while the binaries are not Authenticode-signed.
 - `AppLinks.Support` targets `https://ko-fi.com/PongsathonTan`.
@@ -58,7 +60,7 @@ Keep the same release version in:
 - `clientInfo.version` in `src/CodexUsageTray/CodexAppServerSession.cs`
 - commands and output examples in both README files
 
-Use semantic tags such as `v0.5.0`.
+Use calendar versions and tags such as `2026.10.24.1` / `v2026.10.24.1` (year.month.day.daily-patch). Preserve all four version parts in EXE metadata, app-server clientInfo, updater comparison, staging paths and canonical asset names.
 
 ## Validation
 
@@ -68,7 +70,7 @@ Run from the repository root:
 pwsh -NoLogo -NoProfile -File .\scripts\build.ps1
 pwsh -NoLogo -NoProfile -File .\scripts\test.ps1
 dotnet format .\CodexUsageTray.slnx --verify-no-changes --no-restore
-pwsh -NoLogo -NoProfile -File .\scripts\package-release.ps1 -Version X.Y.Z
+pwsh -NoLogo -NoProfile -File .\scripts\package-release.ps1 -Version year.month.day.patch
 ```
 
 Required evidence:
@@ -92,7 +94,7 @@ Required evidence:
 2. Run the complete validation above.
 3. Commit and push the reviewed source.
 4. Build the final package from the commit that will receive the version tag.
-5. Create and push the `vX.Y.Z` tag.
+5. Create and push the `vyear.month.day.patch` tag.
 6. Publish a GitHub release with the ZIP and `.sha256` assets.
 7. Verify the public API response, digest, anonymous download, installation, and updater.
 8. Keep release notes concise and include changes, SHA-256, test count, Authenticode status, and known limitations.

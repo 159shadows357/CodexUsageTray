@@ -11,6 +11,7 @@ public sealed class AppPaths
         Logs = Path.Combine(Root, "logs");
         Settings = Path.Combine(Root, "settings.json");
         Cache = Path.Combine(Root, "usage-cache.json");
+        ForecastCache = Path.Combine(Root, "reset-forecast-cache.json");
         LocalUsageIndex = Path.Combine(Root, "local-usage-index.json");
         NotificationState = Path.Combine(Root, "notification-state.json");
         ResetCreditAutomationState = Path.Combine(Root, "reset-credit-automation-state.json");
@@ -24,6 +25,7 @@ public sealed class AppPaths
     public string Logs { get; }
     public string Settings { get; }
     public string Cache { get; }
+    public string ForecastCache { get; }
     public string LocalUsageIndex { get; }
     public string NotificationState { get; }
     public string ResetCreditAutomationState { get; }
@@ -44,6 +46,7 @@ public sealed class JsonStore
         var settings = Read<AppSettings>(path) ?? new AppSettings();
         return settings with
         {
+            TrayQuotaSource = Enum.IsDefined(settings.TrayQuotaSource) ? settings.TrayQuotaSource : TrayQuotaSource.Frontier,
             RefreshIntervalMinutes = Math.Clamp(settings.RefreshIntervalMinutes, 1, 60),
             StaleAfterMinutes = Math.Clamp(settings.StaleAfterMinutes, 2, 120),
             ResetCreditLeadTimeMinutes = ResetCreditAutomation.NormalizeLeadTimeMinutes(

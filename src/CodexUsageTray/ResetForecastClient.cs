@@ -1,0 +1,332 @@
+using System.Globalization;
+using System.Net.Http.Headers;
+using System.Text.Json;
+
+namespace CodexUsageTray;
+
+internal sealed record ResetForecastSnapshot
+{
+    public DateTimeOffset CheckedAt { get; init; }
+    public DateTimeOffset? UpdatedAt { get; init; }
+    public DateTimeOffset? LastResetAt { get; init; }
+    public DateTimeOffset? PublishedCheckedAt { get; init; }
+    public DateTimeOffset? PublishedExpiresAt { get; init; }
+    public DateTimeOffset? AlertSourceAt { get; init; }
+    public DateTimeOffset? ObservedAt { get; init; }
+    public DateTimeOffset? ConfirmedAt { get; init; }
+    public DateTimeOffset? LastAttemptAt { get; init; }
+    public DateTimeOffset? RetryAt { get; init; }
+    public int? Probability24Hours { get; init; }
+    public int? Probability48Hours { get; init; }
+    public string? Confidence { get; init; }
+    public string? AlertKind { get; init; }
+    public string? AlertState { get; init; }
+    public string? ConfirmationSource { get; init; }
+    public string? Error { get; init; }
+    public bool IsLive { get; init; }
+
+    public bool IsStale(DateTimeOffset now) =>
+        !IsLive || Error is not null || UpdatedAt is null ||
+        CheckedAt > now.AddMinutes(5) || UpdatedAt > now.AddMinutes(5) ||
+        now - CheckedAt >= TimeSpan.FromMinutes(15) ||
+        now - UpdatedAt.Value >= TimeSpan.FromMinutes(15) ||
+        PublishedExpiresAt is { } expiresAt && now >= expiresAt;
+}
+
+internal sealed class ResetForecastClient : IDisposable
+{
+    internal const string ForecastUrl = "https://codex-reset.com/api/forecast";
+    private const int MaximumBodyBytes = 256 * 1024;
+    private static readonly TimeSpan MinimumRequestInterval = TimeSpan.FromMinutes(1);
+    private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(10);
+    private readonly object _sync = new();
+    private readonly HttpClient _client;
+    private readonly TimeProvider _clock;
+    private readonly CancellationTokenSource _shutdown = new();
+    private readonly CancellationToken _shutdownToken;
+    private ResetForecastSnapshot _snapshot;
+    private DateTimeOffset _nextAllowedRequestAt;
+    private Task<ResetForecastSnapshot>? _inflight;
+    private int _consecutiveFailures;
+    private bool _disposed;
+
+    public ResetForecastClient(ResetForecastSnapshot? cachedSnapshot = null, TimeProvider? timeProvider = null, HttpMessageHandler? handler = null)
+    {
+        _clock = timeProvider ?? TimeProvider.System;
+        _shutdownToken = _shutdown.Token;
+        _client = new HttpClient(handler ?? new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false })
+        {
+            Timeout = Timeout.InfiniteTimeSpan
+        };
+        var now = _clock.GetUtcNow();
+        if (cachedSnapshot is not null &&
+            (cachedSnapshot.Probability24Hours is < 0 or > 100 || cachedSnapshot.Probability48Hours is < 0 or > 100 ||
+             cachedSnapshot.CheckedAt > now.AddMinutes(5) || cachedSnapshot.UpdatedAt > now.AddMinutes(5) ||
+             cachedSnapshot.LastResetAt > now.AddMinutes(5) || cachedSnapshot.LastAttemptAt > now.AddMinutes(5) ||
+             cachedSnapshot.PublishedCheckedAt > now.AddMinutes(5) || cachedSnapshot.PublishedExpiresAt < cachedSnapshot.PublishedCheckedAt))
+        {
+            cachedSnapshot = null;
+        }
+        _snapshot = cachedSnapshot is null
+            ? new ResetForecastSnapshot { CheckedAt = now, Error = "Forecast not available." }
+            : cachedSnapshot with { IsLive = false };
+        var attemptedAt = cachedSnapshot?.LastAttemptAt ?? cachedSnapshot?.CheckedAt;
+        _nextAllowedRequestAt = attemptedAt is { } attempt && attempt <= now.AddMinutes(5)
+            ? attempt.Add(MinimumRequestInterval)
+            : DateTimeOffset.MinValue;
+        if (cachedSnapshot?.RetryAt is { } retryAt && retryAt > _nextAllowedRequestAt)
+        {
+            _nextAllowedRequestAt = retryAt;
+        }
+    }
+
+    public DateTimeOffset NextAllowedRequestAt
+    {
+        get { lock (_sync) return _nextAllowedRequestAt; }
+    }
+
+    public Task<ResetForecastSnapshot> ReadAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        TaskCompletionSource<ResetForecastSnapshot>? completion = null;
+        Task<ResetForecastSnapshot> pending;
+        DateTimeOffset startedAt;
+        lock (_sync)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            startedAt = _clock.GetUtcNow();
+            if (_inflight is not null)
+            {
+                pending = _inflight;
+            }
+            else if (startedAt < _nextAllowedRequestAt)
+            {
+                return Task.FromResult(_snapshot);
+            }
+            else
+            {
+                _nextAllowedRequestAt = startedAt.Add(MinimumRequestInterval);
+                completion = new TaskCompletionSource<ResetForecastSnapshot>(TaskCreationOptions.RunContinuationsAsynchronously);
+                pending = _inflight = completion.Task;
+            }
+        }
+
+        if (completion is not null) _ = CompleteReadAsync(completion, startedAt);
+        return pending.WaitAsync(cancellationToken);
+    }
+
+    private async Task CompleteReadAsync(TaskCompletionSource<ResetForecastSnapshot> completion, DateTimeOffset startedAt)
+    {
+        DateTimeOffset? retryAt = null;
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_shutdownToken);
+            timeout.CancelAfter(RequestTimeout);
+            using var request = new HttpRequestMessage(HttpMethod.Get, ForecastUrl);
+            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+            var version = typeof(ResetForecastClient).Assembly.GetName().Version?.ToString() ?? "1.0";
+            request.Headers.UserAgent.ParseAdd($"CodexUsageTray/{version} (+https://github.com/159shadows357/CodexUsageTray)");
+            using var response = await _client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token).ConfigureAwait(false);
+            retryAt = ReadRetryAfter(response, _clock.GetUtcNow());
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new HttpRequestException($"Forecast request returned HTTP {(int)response.StatusCode}.");
+            }
+
+            var publishedCheckedAt = ReadPublishedHeader(response, "x-published-checked-at", startedAt);
+            var publishedExpiresAt = ReadPublishedHeader(response, "x-published-expires-at", startedAt, allowFuture: true);
+            if (response.Content.Headers.ContentLength > MaximumBodyBytes)
+            {
+                throw new InvalidDataException("Forecast response is too large.");
+            }
+            await using var stream = await response.Content.ReadAsStreamAsync(timeout.Token).ConfigureAwait(false);
+            using var body = new MemoryStream();
+            var buffer = new byte[8192];
+            while (true)
+            {
+                var read = await stream.ReadAsync(buffer, timeout.Token).ConfigureAwait(false);
+                if (read == 0) break;
+                if (body.Length + read > MaximumBodyBytes) throw new InvalidDataException("Forecast response is too large.");
+                body.Write(buffer, 0, read);
+            }
+
+            using var document = JsonDocument.Parse(body.GetBuffer().AsMemory(0, checked((int)body.Length)), new JsonDocumentOptions { MaxDepth = 32 });
+            var snapshot = ParseForecast(document.RootElement, _clock.GetUtcNow(), publishedCheckedAt, publishedExpiresAt) with
+            {
+                LastAttemptAt = startedAt
+            };
+            lock (_sync)
+            {
+                if (_snapshot.UpdatedAt is { } previousUpdate && (!snapshot.IsLive || snapshot.UpdatedAt < previousUpdate))
+                {
+                    snapshot = _snapshot with
+                    {
+                        IsLive = false,
+                        Error = snapshot.Error ?? "Forecast provider data is older than the cached data.",
+                        LastAttemptAt = startedAt
+                    };
+                }
+                _snapshot = snapshot;
+                _consecutiveFailures = 0;
+                if (retryAt > _nextAllowedRequestAt) _nextAllowedRequestAt = retryAt.Value;
+                _snapshot = _snapshot with { RetryAt = _nextAllowedRequestAt };
+                _inflight = null;
+                completion.TrySetResult(_snapshot);
+            }
+        }
+        catch (Exception error) when (_shutdownToken.IsCancellationRequested && error is OperationCanceledException or ObjectDisposedException)
+        {
+            completion.TrySetCanceled(_shutdownToken);
+        }
+        catch (Exception error) when (error is HttpRequestException or IOException or InvalidDataException or JsonException or OperationCanceledException)
+        {
+            lock (_sync)
+            {
+                _consecutiveFailures = Math.Min(_consecutiveFailures + 1, 5);
+                var backoff = TimeSpan.FromMinutes(Math.Min(15, 1 << (_consecutiveFailures - 1)));
+                var backoffUntil = _clock.GetUtcNow().Add(backoff);
+                if (backoffUntil > _nextAllowedRequestAt) _nextAllowedRequestAt = backoffUntil;
+                if (retryAt > _nextAllowedRequestAt) _nextAllowedRequestAt = retryAt.Value;
+                _snapshot = _snapshot with
+                {
+                    IsLive = false,
+                    Error = error switch
+                    {
+                        OperationCanceledException => "Forecast request timed out.",
+                        JsonException => "Forecast response is invalid.",
+                        InvalidDataException => "Forecast response is invalid or too large.",
+                        _ => "Forecast service is unavailable."
+                    },
+                    LastAttemptAt = startedAt,
+                    RetryAt = _nextAllowedRequestAt
+                };
+                _inflight = null;
+                completion.TrySetResult(_snapshot);
+            }
+        }
+        catch (Exception error) when (error is not OutOfMemoryException and not AccessViolationException)
+        {
+            completion.TrySetException(error);
+        }
+        finally
+        {
+            lock (_sync)
+            {
+                if (ReferenceEquals(_inflight, completion.Task)) _inflight = null;
+            }
+        }
+    }
+
+    internal static ResetForecastSnapshot ParseForecast(JsonElement root, DateTimeOffset checkedAt,
+        DateTimeOffset? publishedCheckedAt = null, DateTimeOffset? publishedExpiresAt = null)
+    {
+        if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("probabilities", out var probabilities) ||
+            probabilities.ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidDataException("Forecast probabilities are unavailable.");
+        }
+        var updatedAt = ReadTimestamp(root, "updated_at", checkedAt)
+            ?? throw new InvalidDataException("Forecast update time is unavailable.");
+        var probability24 = ReadPercent(probabilities, "rounded_24h");
+        var probability48 = ReadPercent(probabilities, "rounded_48h");
+        if (probability24 is null && probability48 is null) throw new InvalidDataException("Forecast probabilities are unavailable.");
+        if (publishedCheckedAt > checkedAt.AddMinutes(5) || publishedExpiresAt < publishedCheckedAt)
+        {
+            throw new InvalidDataException("Forecast publication times are invalid.");
+        }
+
+        var alert = root.TryGetProperty("latest_alert", out var latestAlert) && latestAlert.ValueKind == JsonValueKind.Object
+            ? latestAlert
+            : default;
+        var snapshot = new ResetForecastSnapshot
+        {
+            CheckedAt = checkedAt,
+            UpdatedAt = updatedAt,
+            LastResetAt = ReadTimestamp(root, "last_reset_at", checkedAt),
+            PublishedCheckedAt = publishedCheckedAt,
+            PublishedExpiresAt = publishedExpiresAt,
+            Probability24Hours = probability24,
+            Probability48Hours = probability48,
+            Confidence = ReadLabel(root, "confidence"),
+            AlertKind = ReadLabel(alert, "kind") is "reset" or "watch" ? ReadLabel(alert, "kind") : null,
+            AlertState = ReadLabel(alert, "state") is "active" or "expired" or "confirmed" ? ReadLabel(alert, "state") : null,
+            ConfirmationSource = ReadLabel(alert, "confirmation_source"),
+            AlertSourceAt = ReadTimestamp(alert, "source_at", checkedAt),
+            ObservedAt = ReadTimestamp(alert, "observed_at", checkedAt),
+            ConfirmedAt = ReadTimestamp(alert, "confirmed_at", checkedAt),
+            IsLive = true
+        };
+        return snapshot.IsStale(checkedAt)
+            ? snapshot with { IsLive = false, Error = "Forecast provider data is stale." }
+            : snapshot;
+    }
+
+    private static int? ReadPercent(JsonElement element, string name)
+    {
+        if (!element.TryGetProperty(name, out var value) || value.ValueKind == JsonValueKind.Null) return null;
+        if (value.ValueKind != JsonValueKind.Number || !value.TryGetInt32(out var percent) || percent is < 0 or > 100)
+        {
+            throw new InvalidDataException("Forecast percentage is invalid.");
+        }
+        return percent;
+    }
+
+    private static DateTimeOffset? ReadTimestamp(JsonElement element, string name, DateTimeOffset now)
+    {
+        if (element.ValueKind != JsonValueKind.Object || !element.TryGetProperty(name, out var value) || value.ValueKind == JsonValueKind.Null) return null;
+        if (value.ValueKind != JsonValueKind.String) throw new InvalidDataException("Forecast timestamp is invalid.");
+        return ParseTimestamp(value.GetString(), now);
+    }
+
+    private static DateTimeOffset ParseTimestamp(string? value, DateTimeOffset now, bool allowFuture = false)
+    {
+        string[] formats =
+        [
+            "yyyy-MM-dd'T'HH:mm:ss'Z'", "yyyy-MM-dd'T'HH:mm:ss.FFFFFFF'Z'",
+            "yyyy-MM-dd'T'HH:mm:sszzz", "yyyy-MM-dd'T'HH:mm:ss.FFFFFFFzzz"
+        ];
+        if (!DateTimeOffset.TryParseExact(value, formats, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var timestamp) ||
+            timestamp < DateTimeOffset.UnixEpoch || !allowFuture && timestamp > now.AddMinutes(5))
+        {
+            throw new InvalidDataException("Forecast timestamp is invalid.");
+        }
+        return timestamp;
+    }
+
+    private static DateTimeOffset? ReadPublishedHeader(HttpResponseMessage response, string name, DateTimeOffset now, bool allowFuture = false)
+    {
+        if (!response.Headers.TryGetValues(name, out var values)) return null;
+        var entries = values.Take(2).ToArray();
+        if (entries.Length != 1) throw new InvalidDataException("Forecast publication header is invalid.");
+        return ParseTimestamp(entries[0], now, allowFuture);
+    }
+
+    private static string? ReadLabel(JsonElement element, string name) =>
+        element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out var value) &&
+        value.ValueKind == JsonValueKind.String && value.GetString() is { Length: > 0 and <= 64 } text && !text.Any(char.IsControl)
+            ? text
+            : null;
+
+    private static DateTimeOffset? ReadRetryAfter(HttpResponseMessage response, DateTimeOffset now)
+    {
+        var retry = response.Headers.RetryAfter;
+        if (retry?.Date is { } date) return date;
+        if (retry?.Delta is { } delta && delta > TimeSpan.Zero)
+        {
+            return delta > DateTimeOffset.MaxValue - now ? DateTimeOffset.MaxValue : now.Add(delta);
+        }
+        return null;
+    }
+
+    public void Dispose()
+    {
+        lock (_sync)
+        {
+            if (_disposed) return;
+            _disposed = true;
+            _shutdown.Cancel();
+            _client.Dispose();
+            _shutdown.Dispose();
+        }
+    }
+}

@@ -9,11 +9,13 @@ public static class TrayTooltipFormatter
     public static string Format(UsageSnapshot snapshot)
     {
         var bucket = snapshot.TrayBucket;
+        var service = snapshot.TrayQuotaSource == TrayQuotaSource.Frontier || bucket is not null && UsageSnapshot.IsFrontierBucket(bucket)
+            ? "Codex Frontier" : "Codex Usage";
         if (bucket is null)
         {
             return snapshot.Buckets.Count > 0 && snapshot.Status is ConnectionStatus.Connected or ConnectionStatus.RateLimitReached
-                ? "Codex Frontier · unavailable"
-                : $"Codex Frontier · {StatusText(snapshot.Status)}";
+                ? $"{service} · unavailable"
+                : $"{service} · {StatusText(snapshot.Status)}";
         }
 
         var suffix = snapshot.Status switch
@@ -24,7 +26,7 @@ public static class TrayTooltipFormatter
             _ => string.Empty
         };
         var percentage = $" {snapshot.TrayRemainingPercent}% left";
-        const string prefix = "Codex Frontier · ";
+        var prefix = $"{service} · ";
         var availableNameLength = MaximumLength - prefix.Length - percentage.Length - suffix.Length;
         if (availableNameLength < 1)
         {

@@ -77,8 +77,10 @@ public sealed class JsonRpcClient : IAsyncDisposable
             var response = await responseTask.WaitAsync(timeout, cancellationToken);
             if (response.TryGetProperty("error", out var error) && error.ValueKind == JsonValueKind.Object)
             {
-                var code = error.TryGetProperty("code", out var codeElement) && codeElement.TryGetInt32(out var parsedCode) ? parsedCode : -1;
-                var message = error.TryGetProperty("message", out var messageElement) ? messageElement.GetString() : "Unknown JSON-RPC error";
+                var code = error.TryGetProperty("code", out var codeElement) && codeElement.ValueKind == JsonValueKind.Number &&
+                    codeElement.TryGetInt32(out var parsedCode) ? parsedCode : -1;
+                var message = error.TryGetProperty("message", out var messageElement) && messageElement.ValueKind == JsonValueKind.String
+                    ? messageElement.GetString() : "Unknown JSON-RPC error";
                 throw new JsonRpcException(code, SecretSanitizer.Sanitize(message));
             }
 

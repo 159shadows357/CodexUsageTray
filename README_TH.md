@@ -9,11 +9,11 @@ Created by **Pongsathon.T** · [MIT License](LICENSE) · [English](README.md)
 ## ความสามารถ
 
 - รันแบบ `WinExe` ไม่มี console window
-- เลือก tray icon ได้ระหว่าง `Ring`, `Solid bar`, `Segmented bar` และ `Number only (Frontier)`
-- เลือก usage popup ได้ระหว่าง `Classic`, `macOS style` และ `Paper style`
+- เลือก tray icon ได้ระหว่าง `Ring`, `Solid bar`, `Segmented bar` และ `Number only`
+- เลือก usage popup ได้ระหว่าง `Classic`, `macOS style`, `Paper style`, `Cadra Light` และ `Cadra Dark`
 - เมนูคลิกขวาใช้ dark style ให้ใกล้เคียง Windows 11
 - popup แสดงทุก rate-limit bucket ที่ server ส่งมา
-- tray ใช้เฉพาะ Frontier bucket (`limitId=codex`) ส่วน Spark และ bucket อื่นยังแสดงใน popup
+- tray ใช้ `Frontier only` (`limitId=codex`) เป็นค่าเริ่มต้น และเลือก `Lowest remaining bucket` ได้จาก `Tray quota source` ทุก bucket ยังดูได้ใน popup
 - รองรับ Weekly-only, `rateLimitsByLimitId`, fallback `rateLimits`, `primary` และ `secondary`
 - แสดงจำนวน reset credits, เวลาหมดอายุตามเวลาท้องถิ่น และ token activity เมื่อ endpoint รองรับ
 - เลือกแจ้งเตือนหรือใช้ reset credit อัตโนมัติได้ โดยกำหนดเวลาล่วงหน้าก่อนหมดอายุเอง (ค่า default คือ 6 ชั่วโมง)
@@ -44,7 +44,7 @@ pwsh -File .\scripts\build.ps1
 pwsh -File .\scripts\test.ps1
 ```
 
-test project ใช้ package-free runner และไม่เพิ่ม NuGet test framework ผลล่าสุดคือ 73 tests ผ่านทั้งหมด
+test project ใช้ package-free runner และไม่เพิ่ม NuGet test framework ผลล่าสุดคือ 140 tests ผ่านทั้งหมด
 
 ## Run จาก source
 
@@ -57,7 +57,7 @@ dotnet run --project .\src\CodexUsageTray\CodexUsageTray.csproj -c Release
 ## Publish
 
 ```powershell
-pwsh -File .\scripts\publish.ps1 -Version 0.6.4
+pwsh -File .\scripts\publish.ps1 -Version 2026.10.24.1
 ```
 
 ผลลัพธ์:
@@ -101,7 +101,7 @@ uninstall จะเก็บ settings, cache และ logs ใต้ `%LOCALAPP
 ## สร้าง ZIP สำหรับติดตั้งเครื่องอื่น
 
 ```powershell
-pwsh -File .\scripts\package-release.ps1 -Version 0.6.4
+pwsh -File .\scripts\package-release.ps1 -Version 2026.10.24.1
 ```
 
 script จะ publish application ล่าสุดก่อนสร้าง Setup และ ZIP ใช้ `-SkipAppPublish` ได้เมื่อยืนยันแล้วว่า `artifacts\publish\win-x64` เป็น build ที่ต้องการ
@@ -109,7 +109,7 @@ script จะ publish application ล่าสุดก่อนสร้าง 
 ผลลัพธ์:
 
 ```text
-artifacts\release\CodexUsageTray-0.6.4-win-x64.zip
+artifacts\release\CodexUsageTray-2026.10.24.1-win-x64.zip
 ```
 
 ภายใน ZIP มี `CodexUsageTray-Setup.exe`, application payload, `README.txt`, `LICENSE.txt` และ `SHA256SUMS.txt` ผู้ใช้ต้อง extract ทุกไฟล์แล้วดับเบิลคลิก Setup ตัว installer ใช้สิทธิ์ current user, เปิด Start with Windows เป็นค่า default และไม่ต้องติดตั้ง .NET เพิ่ม
@@ -133,7 +133,7 @@ $thumbprint = Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert |
   Where-Object HasPrivateKey |
   Select-Object -First 1 -ExpandProperty Thumbprint
 pwsh -File .\scripts\package-release.ps1 `
-  -Version 0.6.4 `
+  -Version 2026.10.24.1 `
   -CodeSigningThumbprint $thumbprint
 ```
 
@@ -157,9 +157,9 @@ pwsh -File .\scripts\start-with-windows.ps1 -Disable
 - `Ring`: ค่า default เป็นวงแสดงสัดส่วนโดยไม่มีตัวเลข
 - `Solid bar`: แถบเติมต่อเนื่อง
 - `Segmented bar`: แถบแบ่งสี่ช่วง
-- `Number only (Frontier)`: แสดงเฉพาะตัวเลขเปอร์เซ็นต์คงเหลือของ Frontier โดยไม่ใส่เครื่องหมาย `%` ใช้ `Segoe UI` บนพื้นโปร่งใส ไม่มี label, กรอบ หรือ card
+- `Number only`: แสดงเฉพาะตัวเลขเปอร์เซ็นต์คงเหลือของแหล่งที่เลือก โดยไม่ใส่เครื่องหมาย `%` ใช้ `Segoe UI` บนพื้นโปร่งใส ไม่มี label, กรอบ หรือ card
 
-ทุก tray style ใช้ bucket ที่มี `limitId=codex` เท่านั้น หากไม่พบ Frontier โปรแกรมจะแสดงสถานะ unavailable โดยไม่หยิบ Spark มาแทน โปรแกรมเปลี่ยน icon ทันทีและเก็บค่าที่เลือกใน `settings.json` ทั้งสองแบบ bar ไม่มีขั้วหรือกรอบรูป battery ตัวเลขเปอร์เซ็นต์ที่แน่นอนอยู่ใน tooltip
+ทุก tray style ใช้แหล่งโควตาที่เลือกใน `Tray quota source` ค่าเริ่มต้นคือ `Frontier only` ซึ่งเลือกเฉพาะ `limitId=codex` และแสดง unavailable เมื่อไม่พบโดยไม่หยิบ Spark มาแทน tooltip และการ์ดแรกบอกแหล่งที่ใช้อยู่ โปรแกรมเปลี่ยน icon ทันทีและเก็บค่าที่เลือกใน `settings.json` ทั้งสองแบบ bar ไม่มีขั้วหรือกรอบรูป battery ตัวเลขเปอร์เซ็นต์ที่แน่นอนอยู่ใน tooltip
 
 ## Popup style
 
@@ -168,10 +168,25 @@ pwsh -File .\scripts\start-with-windows.ps1 -Disable
 - `Classic`: รูปแบบเดิมขนาดกะทัดรัด
 - `macOS style`: พื้นหลังน้ำเงินเข้ม, rounded cards, progress bar, Account และ Token activity ตามภาพอ้างอิง
 - `Paper style`: พื้นกระดาษสีอ่อน, กรอบเหลี่ยมพร้อม offset shadow, ตัวเลข monospace และ progress bar สีเข้ม
+- `Cadra Light` / `Cadra Dark`: การ์ด WinForms พื้น neutral และ Ocean accent จากแนวทาง local Cadra UI reference โดยคงรูปแบบเดิมไว้ทั้งหมด หาก bucket มากเกินพื้นที่หน้าจอ ใช้ Previous/Next ดูทุก bucket เป็นหน้าโดยไม่มี scrollbar และตรวจ freshness ของ forecast ทุกวินาทีขณะ popup เปิด
 
 ค่าที่เลือกเขียนลง `settings.json` และใช้ทันทีโดยไม่ restart ทั้ง `macOS style` และ `Paper style` ปรับความสูงตามจำนวน bucket ภายใน `Screen.WorkingArea` และแสดงเฉพาะข้อมูลที่ app-server ส่งมาจริง หาก server ส่งรายละเอียด reset credit โปรแกรมจะแสดงเวลาหมดอายุที่ใกล้ที่สุด
 
 ทุก popup style มีปุ่ม `Refresh` และ `Close` และสามารถปิดด้วย `Esc`, คลิกนอก popup หรือคลิกซ้ายที่ tray icon ซ้ำอีกครั้ง
+
+## Tibo reset forecast
+
+popup แสดงโอกาสรีเซ็ต Codex ส่วนกลางภายใน 24/48 ชั่วโมง ความเชื่อมั่น รีเซ็ตล่าสุดที่แหล่งข้อมูลรายงาน และอายุข้อมูล แยกจากเวลารีเซ็ตโควตาของบัญชีจริงและวันหมดอายุ reset credit การรายงานจากชุมชนไม่ยืนยันว่าบัญชีผู้ใช้ได้รับรีเซ็ตแล้ว
+
+ใช้ API ฟรีไม่ต้องมี key ที่ `https://codex-reset.com/api/forecast` ตาม [Tibo Reset Developers](https://tiboreset.com/developers) ส่ง User-Agent ของโครงการ ไม่ส่งข้อมูลบัญชีหรือ Authorization และแสดง **Data: codex-reset.com** พร้อมลิงก์แหล่งข้อมูล ตรวจตามปกติทุก 5 นาที manual/concurrent refresh ใช้ throttle ร่วมกันอย่างน้อย 1 นาที และเคารพ Retry-After/backoff ปิดส่วน forecast ได้จากเมนู
+
+หากเรียกไม่สำเร็จจะเก็บค่าล่าสุดพร้อมสถานะข้อมูลเก่า ถ้าไม่รู้เปอร์เซ็นต์จะแสดง unavailable ไม่ใช้ 0% แทน ข้อมูลเกิน 15 นาทีถือว่าเก่า และวันหมดอายุข้อมูลจาก provider อาจทำให้ถือว่าเก่าก่อนถึงช่วงนั้น ข้อมูล forecast ไม่เปลี่ยนไอคอนโควตาและไม่ใช้ reset credit
+
+## ChatGPT Plus และเลขเวอร์ชันตามวันที่
+
+Plus, Pro และแผน ChatGPT อื่นอ่าน bucket ที่ local app-server ส่งมาจริง Plus อาจมีรอบ 5 ชั่วโมงและรายสัปดาห์ โปรแกรมไม่สร้างรอบโควตา จำนวนข้อความ หรือสิทธิ reset credit จากชื่อแผน หาก optional token-activity endpoint ใช้ไม่ได้ โควตายังอัปเดตได้ ตรวจ runtime Codex ที่เปลี่ยนทุก 5 นาทีและหลัง resume โดยเคารพ explicit CLI override และ reconnect เฉพาะ child app-server ของ tray
+
+ใช้เลขเวอร์ชัน **year.month.day.patch** เช่น `2026.10.24.1` คือ release แรกของวันนั้น เก็บครบสี่ส่วนใน metadata, tag และชื่อ ZIP หลัก มี ZIP ชื่อสามส่วนที่มี binary เหมือนกันทุก byte เพื่อให้ updater รุ่น `0.6.x` อัปเดตข้ามมาได้ หากติดตั้งเองให้เลือก ZIP ชื่อสี่ส่วน
 
 ## Reset credits
 
@@ -190,7 +205,7 @@ pwsh -File .\scripts\start-with-windows.ps1 -Disable
 
 popup ทั้งสามรูปแบบแสดงยอด token จาก local Codex history และค่าใช้จ่ายสมมติหากคิดตาม Standard API ไม่ใช่ยอดเรียกเก็บจริงของ ChatGPT/Codex plan โปรแกรมจัดกลุ่มตาม Git root จาก `cwd` และแสดง 3 โปรเจกต์ที่มีค่าใช้จ่ายสูงสุดใน popup
 
-ราคาอ้างอิงมีวันที่กำกับในหน้าจอ `gpt-5.3-codex-spark` ยังไม่มีราคาสาธารณะ จึงใช้ราคา `gpt-5.3-codex` เป็น proxy ส่วน token ที่ไม่มี model จะอยู่ใน `unpriced` และไม่ถูกบวกเพิ่ม
+ราคาอ้างอิงมีวันที่กำกับในหน้าจอ ตารางราคาเพิ่ม GPT-6/6.1 และใช้ Standard rates ที่ตรวจวันที่ 2026-10-24 โดย cache write สมมติระยะ 30 นาทีเพราะ counters ไม่ระบุ retention (12 ชั่วโมงอาจมีราคาสูงกว่า) GPT-5.6 Sol ใช้ราคาโปรโมชั่นที่ประกาศไว้อย่างน้อยถึง 2026-11-21 incremental index จะคำนวณใหม่เมื่อ fingerprint ของราคา/parser เปลี่ยน `gpt-5.3-codex-spark` ยังไม่มีราคาสาธารณะ จึงใช้ราคา `gpt-5.3-codex` เป็น proxy ส่วน token ที่ไม่มี model จะอยู่ใน `unpriced` และไม่ถูกบวกเพิ่ม
 
 สูตรที่ใช้:
 
@@ -247,7 +262,7 @@ request ตรวจ update และดาวน์โหลด release ไม�
 
 ก่อนติดตั้ง โปรแกรมตรวจ:
 
-1. ชื่อ asset ต้องตรง `CodexUsageTray-X.Y.Z-win-x64.zip`
+1. ชื่อ asset ต้องตรง `CodexUsageTray-year.month.day.patch-win-x64.zip`
 2. `asset.digest` ต้องเป็น SHA-256 และตรงกับไฟล์ที่ดาวน์โหลด
 3. ZIP ต้องไม่มี path traversal และมีขนาดไม่เกิน limit
 4. `CodexUsageTray-Setup.exe` กับ `CodexUsageTray.exe` ต้องตรง `SHA256SUMS.txt`

@@ -1,0 +1,28 @@
+{
+  "mode": "model",
+  "updated_at": "2026-10-24T07:01:50.445Z",
+  "probabilities": {
+    "raw_24h": 0.3890401292986312,
+    "raw_48h": 0.6267280363925667,
+    "rounded_24h": 39,
+    "rounded_48h": 63
+  },
+  "confidence": "low",
+  "last_reset_at": "2026-10-23T17:40:51.000Z",
+  "official_signal": null,
+  "latest_alert": {
+    "id": "2113492502355562875",
+    "kind": "reset",
+    "state": "confirmed",
+    "source_at": "2026-10-23T17:40:51.000Z",
+    "summary": "Reset observed by operator; awaiting Tibo's confirmation.",
+    "url": "https://x.com/thsottiaux/status/2113492502355562875",
+    "score": null,
+    "window": null,
+    "corrected": true,
+    "confirmation_source": "operator_observed",
+    "observed_at": "2026-10-23T17:40:51.000Z",
+    "confirmed_at": null,
+    "confirmation_url": null
+  }
+}

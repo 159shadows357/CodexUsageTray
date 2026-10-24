@@ -21,12 +21,14 @@ public sealed class CodexAppServerSession : IAsyncDisposable
 
     public bool IsRunning => _process is { HasExited: false } && _client is not null;
     public string? CodexVersion { get; private set; }
+    public string? ExecutablePath { get; private set; }
     public string ProtocolCompatibilityStatus { get; private set; } = "not checked";
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         var locator = new CodexExecutableLocator(_logger);
         var executable = await locator.FindAsync(cancellationToken);
+        ExecutablePath = executable;
         CodexVersion = await ReadVersionAsync(executable, cancellationToken);
 
         var process = new Process
@@ -49,7 +51,7 @@ public sealed class CodexAppServerSession : IAsyncDisposable
             "initialize",
             new
             {
-                clientInfo = new { name = "codex_usage_tray", title = "Codex Usage Tray", version = "0.6.4" },
+                clientInfo = new { name = "codex_usage_tray", title = "Codex Usage Tray", version = GitHubReleaseUpdater.FormatVersion(GitHubReleaseUpdater.CurrentVersion) },
                 capabilities = new { experimentalApi = true }
             },
             RequestTimeout,
@@ -62,7 +64,8 @@ public sealed class CodexAppServerSession : IAsyncDisposable
     {
         var client = _client ?? throw new InvalidOperationException("Codex app-server is not connected.");
         var account = await client.RequestAsync("account/read", new { refreshToken = false }, RequestTimeout, cancellationToken);
-        if (!account.TryGetProperty("account", out var accountValue) || accountValue.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+        if (account.ValueKind != JsonValueKind.Object ||
+            !account.TryGetProperty("account", out var accountValue) || accountValue.ValueKind != JsonValueKind.Object)
         {
             return new UsageSnapshot
             {
@@ -84,6 +87,10 @@ public sealed class CodexAppServerSession : IAsyncDisposable
         {
             _logger.Info("Token activity endpoint is unavailable in this Codex version/account.");
         }
+        catch (Exception error) when (error is JsonRpcException or TimeoutException or IOException or System.Text.Json.JsonException)
+        {
+            _logger.Info($"Optional token activity unavailable: {SecretSanitizer.Sanitize(error.Message)}");
+        }
 
         var buckets = RateLimitNormalizer.Normalize(limits).ToList();
         var compatibility = ProtocolCompatibility.Inspect(limits, usage);
@@ -103,11 +110,13 @@ public sealed class CodexAppServerSession : IAsyncDisposable
             }
         }
         _lastCompatibilityWarningSignature = warningSignature;
-        if (string.IsNullOrWhiteSpace(planType) && limits.TryGetProperty("rateLimits", out var fallback) && fallback.ValueKind == JsonValueKind.Object)
+        if (string.IsNullOrWhiteSpace(planType) && limits.ValueKind == JsonValueKind.Object &&
+            limits.TryGetProperty("rateLimits", out var fallback) && fallback.ValueKind == JsonValueKind.Object)
         {
             planType = ReadString(fallback, "planType");
         }
-        if (string.IsNullOrWhiteSpace(planType) && limits.TryGetProperty("rateLimitsByLimitId", out var rateLimitMap) && rateLimitMap.ValueKind == JsonValueKind.Object)
+        if (string.IsNullOrWhiteSpace(planType) && limits.ValueKind == JsonValueKind.Object &&
+            limits.TryGetProperty("rateLimitsByLimitId", out var rateLimitMap) && rateLimitMap.ValueKind == JsonValueKind.Object)
         {
             planType = rateLimitMap.EnumerateObject()
                 .Select(item => item.Value.ValueKind == JsonValueKind.Object ? ReadString(item.Value, "planType") : null)
@@ -143,6 +152,21 @@ public sealed class CodexAppServerSession : IAsyncDisposable
             RequestTimeout,
             cancellationToken);
         return ParseResetCreditOutcome(response);
+    }
+
+    public async Task<bool> PreferredExecutableChangedAsync(CancellationToken cancellationToken)
+    {
+        if (ExecutablePath is null) return false;
+        try
+        {
+            var preferred = await new CodexExecutableLocator(_logger).FindAsync(cancellationToken);
+            return !string.Equals(Path.GetFullPath(ExecutablePath), Path.GetFullPath(preferred), StringComparison.OrdinalIgnoreCase);
+        }
+        catch (CodexCliNotFoundException)
+        {
+            // A running child can remain healthy while Desktop replaces its on-disk runtime.
+            return false;
+        }
     }
 
     internal static ResetCreditConsumeOutcome ParseResetCreditOutcome(JsonElement response)

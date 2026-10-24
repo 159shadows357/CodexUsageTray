@@ -102,13 +102,21 @@ internal static class Program
 
     private static async Task<int> Main()
     {
+        Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
+        Tests.AddRange(RootUpgradeTests.Cases);
+        Tests.AddRange(CoreUpgradeTests.Cases);
+        Tests.AddRange(ForecastTests.Cases);
+        Tests.AddRange(UiUpgradeTests.Cases);
         var passed = 0;
         var failed = 0;
         foreach (var test in Tests)
         {
             try
             {
-                await test.Run();
+                // Form-only tests may install a WinForms context without a message loop.
+                // Network tests must continue on the runner, not post to that unpumped context.
+                SynchronizationContext.SetSynchronizationContext(null);
+                await test.Run().WaitAsync(TimeSpan.FromSeconds(45)).ConfigureAwait(false);
                 Console.WriteLine($"PASS {test.Name}");
                 passed++;
             }
@@ -530,10 +538,9 @@ internal static class Program
         Directory.CreateDirectory(root);
         try
         {
-            using var pipeServer = new System.IO.Pipes.AnonymousPipeServerStream(System.IO.Pipes.PipeDirection.Out, HandleInheritability.None);
-            using var pipeClient = new System.IO.Pipes.AnonymousPipeClientStream(System.IO.Pipes.PipeDirection.In, pipeServer.GetClientHandleAsString());
-            pipeServer.DisposeLocalCopyOfClientHandle();
-            using var input = new StreamReader(pipeClient);
+            // ProcessLine is driven directly; sharing an anonymous-pipe handle in one
+            // process would double-close it and can corrupt unrelated HTTP/Windows handles.
+            using var input = new StreamReader(new MemoryStream());
             using var outputStream = new MemoryStream();
             using var output = new StreamWriter(outputStream, leaveOpen: true) { AutoFlush = true };
             await using var client = new JsonRpcClient(input, output, new AppLogger(new AppPaths(root)), startReader: false);
@@ -1186,7 +1193,7 @@ internal static class Program
         WithTempDirectory(root =>
         {
             var currentVersion = GitHubReleaseUpdater.CurrentVersion;
-            var current = Path.Combine(root, $"{currentVersion.Major}.{currentVersion.Minor}.{currentVersion.Build}");
+            var current = Path.Combine(root, GitHubReleaseUpdater.FormatVersion(currentVersion));
             var old = Path.Combine(root, "0.0.1");
             Directory.CreateDirectory(current);
             Directory.CreateDirectory(old);
@@ -1284,7 +1291,7 @@ internal static class Program
         Equal(210_000L, result.TotalTokens);
         Equal(210_000L, result.PricedTokens);
         Equal(0L, result.UnpricedTokens);
-        Equal(0.875m, result.EstimatedUsd);
+        Equal(0.66m, result.EstimatedUsd);
         False(result.UsesProxyPricing);
         return Task.CompletedTask;
     }
@@ -1339,7 +1346,7 @@ internal static class Program
             var estimate = analyzer.Analyze(sessionsRoot);
             True(estimate.IsAvailable);
             Equal(2_800L, estimate.TotalTokens);
-            Equal(0.01655m, estimate.EstimatedUsd);
+            Equal(0.01204m, estimate.EstimatedUsd);
             Equal(1, estimate.ProjectCount);
             Equal("sample-project", estimate.Projects.Single().Name);
             Equal(2_800L, estimate.Projects.Single().TotalTokens);
@@ -1352,7 +1359,7 @@ internal static class Program
             ]);
             var updated = analyzer.Analyze(sessionsRoot);
             Equal(3_900L, updated.TotalTokens);
-            Equal(0.02275m, updated.EstimatedUsd);
+            Equal(0.0166m, updated.EstimatedUsd);
             Equal(2, updated.DailyUsage.Count);
             var cached = analyzer.Analyze(sessionsRoot);
             Equal(updated.TotalTokens, cached.TotalTokens);
@@ -1875,10 +1882,16 @@ internal static class Program
             True(text.Any(value => value.StartsWith("OpenAI status · checked ", StringComparison.Ordinal)), $"{style} did not label status freshness.");
 
             var topLevel = popup.Controls.OfType<FlowLayoutPanel>().Single().Controls.Cast<Control>().ToList();
-            var trayIndex = topLevel.FindIndex(control => control.AccessibleName?.StartsWith("Tray indicator, ", StringComparison.Ordinal) == true);
-            var firstQuotaIndex = topLevel.FindIndex(control => control.AccessibleName?.Contains("% left", StringComparison.Ordinal) == true);
+            var trayIndex = topLevel.FindIndex(control => new[] { control }.Concat(Descendants(control))
+                .Any(child => child.AccessibleName?.StartsWith("Tray indicator, ", StringComparison.Ordinal) == true));
+            var firstQuotaIndex = topLevel.FindIndex(control => new[] { control }.Concat(Descendants(control))
+                .Any(child => child.AccessibleName?.Contains("% left", StringComparison.Ordinal) == true));
             var statusIndex = topLevel.FindIndex(control => control.AccessibleName?.StartsWith("OpenAI status, ", StringComparison.Ordinal) == true);
             True(trayIndex >= 0 && trayIndex == firstQuotaIndex, $"{style} did not place the Frontier tray bucket first.");
+            var firstQuota = topLevel.SelectMany(control => new[] { control }.Concat(Descendants(control)))
+                .First(control => control.AccessibleName?.Contains("% left", StringComparison.Ordinal) == true);
+            True(firstQuota.AccessibleName?.StartsWith("Tray indicator, ", StringComparison.Ordinal) == true,
+                $"{style} did not put the selected tray bucket first inside its quota grid.");
             True(statusIndex > trayIndex, $"{style} did not place quota before OpenAI status.");
         }
 
@@ -1900,9 +1913,9 @@ internal static class Program
             "Login",
             "Conversations",
             "Search",
-            "Sora",
+            "dots",
             "GPTs",
-            "ChatGPT Atlas",
+            "Space",
             "Deep Research",
             "Image Generation",
             "Agent",
