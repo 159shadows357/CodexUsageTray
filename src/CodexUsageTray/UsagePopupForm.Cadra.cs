@@ -288,27 +288,37 @@ public sealed partial class UsagePopupForm
         var inset = ScaleUi(14);
         var availableWidth = card.Width - inset * 2;
         var title = DashboardLabel("Reset forecast", 10, FontStyle.Bold, palette.Text);
-        title.SetBounds(inset, ScaleUi(8), availableWidth, ScaleUi(22));
+        title.SetBounds(inset, ScaleUi(8), availableWidth - ScaleUi(94), ScaleUi(22));
         var state = _forecastFreshnessState;
-        var freshness = DashboardLabel(state, 8.5f, FontStyle.Bold, state == "Stale" ? palette.Warn : palette.Muted);
+        var activePromise = state == "Live" && _resetForecast.HasActivePromise(DateTimeOffset.UtcNow);
+        var freshness = DashboardLabel(state == "Live" ? "API fresh" : $"API {state}", 8.5f, FontStyle.Bold, state == "Stale" ? palette.Warn : palette.Muted);
         freshness.TextAlign = ContentAlignment.TopRight;
         freshness.SetBounds(card.Width - ScaleUi(100), ScaleUi(10), ScaleUi(86), ScaleUi(20));
-        var probabilities = DashboardLabel(
-            $"24h {FormatProbability(_resetForecast.Probability24Hours)}  ·  48h {FormatProbability(_resetForecast.Probability48Hours)}",
-            11, FontStyle.Bold, palette.Accent);
+        var modelOdds = _resetForecast.ModelProbability24Hours is not null || _resetForecast.ModelProbability48Hours is not null
+            ? $"Model: 24h {FormatProbability(_resetForecast.ModelProbability24Hours)} · 48h {FormatProbability(_resetForecast.ModelProbability48Hours)}"
+            : $"API: 24h {FormatProbability(_resetForecast.Probability24Hours)} · 48h {FormatProbability(_resetForecast.Probability48Hours)}";
+        var headline = activePromise
+            ? _resetForecast.SignalPercent is { } score ? $"Reset promised · Watch {score}%" : "Reset promised · score unavailable"
+            : modelOdds;
+        var probabilities = DashboardLabel(headline, 11, FontStyle.Bold, palette.Accent);
         probabilities.SetBounds(inset, ScaleUi(_compactLayout ? 28 : 33), availableWidth, ScaleUi(24));
-        var updated = _resetForecast.UpdatedAt is null ? "updated time unavailable" : $"Updated {FormatUpdatedAge(_resetForecast.UpdatedAt.Value)}";
-        var confidence = DashboardLabel($"Confidence: {_resetForecast.Confidence ?? "unavailable"} · {updated}", 8.5f, FontStyle.Regular, palette.Muted);
+        var calculated = _resetForecast.UpdatedAt is null ? "Calculation time unavailable" : $"Calculated {FormatUpdatedAge(_resetForecast.UpdatedAt.Value)}";
+        var confidence = DashboardLabel(activePromise
+            ? $"{modelOdds} · {_resetForecast.Confidence ?? "unavailable"} confidence"
+            : $"Confidence: {_resetForecast.Confidence ?? "unavailable"} · {calculated}", 8.5f, FontStyle.Regular, palette.Muted);
         confidence.SetBounds(inset, ScaleUi(_compactLayout ? 51 : 59), availableWidth, ScaleUi(20));
         var lastReset = DashboardLabel(
             $"Last reported reset: {(_resetForecast.LastResetAt is null ? "unavailable" : FormatResetCreditExpiry(_resetForecast.LastResetAt.Value.ToLocalTime()))}",
             8.5f, FontStyle.Regular, palette.Muted);
         lastReset.SetBounds(inset, ScaleUi(_compactLayout ? 71 : 79), availableWidth, ScaleUi(20));
-        var signal = DashboardLabel(FormatForecastSignal(), 8.5f, FontStyle.Regular, palette.Muted);
+        var signal = DashboardLabel(activePromise
+            ? $"Posted {FormatResetCreditExpiry(_resetForecast.SignalAt!.Value.ToLocalTime())}"
+            : FormatForecastSignal(), 8.5f, FontStyle.Regular, palette.Muted);
         signal.SetBounds(inset, ScaleUi(_compactLayout ? 91 : 99), availableWidth, ScaleUi(20));
-        var qualifier = DashboardLabel("Community prediction · account reset not guaranteed", 8, FontStyle.Regular, palette.Muted);
+        var qualifier = DashboardLabel(activePromise ? $"{calculated} · account reset not guaranteed"
+            : "Community prediction · account reset not guaranteed", 8, FontStyle.Regular, palette.Muted);
         qualifier.SetBounds(inset, ScaleUi(_compactLayout ? 111 : 120), availableWidth, ScaleUi(20));
-        var source = CreateProviderLink(palette.Accent);
+        var source = CreateProviderLink(palette.Accent, activePromise ? _resetForecast.SignalUrl : null);
         source.SetBounds(inset, ScaleUi(_compactLayout ? 131 : 141), availableWidth, ScaleUi(20));
         card.Controls.AddRange([title, freshness, probabilities, confidence, lastReset, signal, qualifier, source]);
         _content.Controls.Add(card);
@@ -331,7 +341,7 @@ public sealed partial class UsagePopupForm
         _ => "Signal: unavailable"
     };
 
-    private static LinkLabel CreateProviderLink(Color accent)
+    private static LinkLabel CreateProviderLink(Color accent, string? signalUrl = null)
     {
         var font = new Font("Segoe UI", 8.5f, FontStyle.Regular);
         var link = new LinkLabel
@@ -348,6 +358,11 @@ public sealed partial class UsagePopupForm
             AccessibleDescription = "Open the codex-reset.com community prediction source"
         };
         link.Links.Add(0, link.Text.Length, "https://codex-reset.com/");
+        if (signalUrl is not null)
+        {
+            link.Text += " · View post";
+            link.Links.Add(link.Text.Length - "View post".Length, "View post".Length, signalUrl);
+        }
         link.LinkClicked += (_, args) =>
         {
             if (args.Link?.LinkData is not string url) return;

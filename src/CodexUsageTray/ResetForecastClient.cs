@@ -18,6 +18,14 @@ internal sealed record ResetForecastSnapshot
     public DateTimeOffset? RetryAt { get; init; }
     public int? Probability24Hours { get; init; }
     public int? Probability48Hours { get; init; }
+    public int? ModelProbability24Hours { get; init; }
+    public int? ModelProbability48Hours { get; init; }
+    public string? ForecastMode { get; init; }
+    public string? SignalType { get; init; }
+    public int? SignalPercent { get; init; }
+    public DateTimeOffset? SignalAt { get; init; }
+    public string? SignalId { get; init; }
+    public string? SignalUrl { get; init; }
     public string? Confidence { get; init; }
     public string? AlertKind { get; init; }
     public string? AlertState { get; init; }
@@ -31,6 +39,25 @@ internal sealed record ResetForecastSnapshot
         now - CheckedAt >= TimeSpan.FromMinutes(15) ||
         now - UpdatedAt.Value >= TimeSpan.FromMinutes(15) ||
         PublishedExpiresAt is { } expiresAt && now >= expiresAt;
+
+    public bool HasActivePromise(DateTimeOffset now)
+    {
+        if (IsStale(now) || ForecastMode != "announced" || SignalType != "promise" ||
+            SignalAt is not { } signalAt || signalAt < DateTimeOffset.UnixEpoch ||
+            signalAt > now || signalAt > UpdatedAt!.Value.AddMinutes(5) ||
+            ResetForecastClient.ValidateSignalUrl(SignalUrl, SignalId) is null)
+        {
+            return false;
+        }
+
+        var newestReset = LastResetAt;
+        if (AlertKind == "reset" && (AlertState == "confirmed" || ConfirmationSource == "operator_observed"))
+        {
+            foreach (var resetAt in new[] { AlertSourceAt, ObservedAt, ConfirmedAt })
+                if (resetAt is not null && (newestReset is null || resetAt > newestReset)) newestReset = resetAt;
+        }
+        return newestReset is null || signalAt > newestReset;
+    }
 }
 
 internal sealed class ResetForecastClient : IDisposable
@@ -66,6 +93,20 @@ internal sealed class ResetForecastClient : IDisposable
              cachedSnapshot.PublishedCheckedAt > now.AddMinutes(5) || cachedSnapshot.PublishedExpiresAt < cachedSnapshot.PublishedCheckedAt))
         {
             cachedSnapshot = null;
+        }
+        if (cachedSnapshot is not null)
+        {
+            cachedSnapshot = cachedSnapshot with
+            {
+                ModelProbability24Hours = ValidPercent(cachedSnapshot.ModelProbability24Hours),
+                ModelProbability48Hours = ValidPercent(cachedSnapshot.ModelProbability48Hours),
+                ForecastMode = cachedSnapshot.ForecastMode is "model" or "announced" ? cachedSnapshot.ForecastMode : null,
+                SignalType = cachedSnapshot.SignalType == "promise" ? "promise" : null,
+                SignalPercent = ValidPercent(cachedSnapshot.SignalPercent),
+                SignalAt = cachedSnapshot.SignalAt is { } signalAt && signalAt >= DateTimeOffset.UnixEpoch && signalAt <= now.AddMinutes(5)
+                    ? signalAt : null,
+                SignalUrl = ValidateSignalUrl(cachedSnapshot.SignalUrl, cachedSnapshot.SignalId)
+            };
         }
         _snapshot = cachedSnapshot is null
             ? new ResetForecastSnapshot { CheckedAt = now, Error = "Forecast not available." }
@@ -238,6 +279,14 @@ internal sealed class ResetForecastClient : IDisposable
         var alert = root.TryGetProperty("latest_alert", out var latestAlert) && latestAlert.ValueKind == JsonValueKind.Object
             ? latestAlert
             : default;
+        var officialSignal = ObjectProperty(root, "official_signal");
+        var signalId = ReadLabel(officialSignal, "tweet_id");
+        var directScore = ReadOptionalPercent(probabilities, "signal_percent");
+        var nestedScore = ReadOptionalPercent(ObjectProperty(officialSignal, "score"), "value");
+        var topLevelScore = ReadOptionalPercent(ObjectProperty(root, "signal_score"), "value");
+        var selectedScore = directScore ?? nestedScore ?? topLevelScore;
+        var scoresAgree = (directScore is null || directScore == selectedScore) &&
+            (nestedScore is null || nestedScore == selectedScore) && (topLevelScore is null || topLevelScore == selectedScore);
         var snapshot = new ResetForecastSnapshot
         {
             CheckedAt = checkedAt,
@@ -247,6 +296,14 @@ internal sealed class ResetForecastClient : IDisposable
             PublishedExpiresAt = publishedExpiresAt,
             Probability24Hours = probability24,
             Probability48Hours = probability48,
+            ModelProbability24Hours = ReadOptionalPercent(probabilities, "model_24h"),
+            ModelProbability48Hours = ReadOptionalPercent(probabilities, "model_48h"),
+            ForecastMode = ReadLabel(root, "mode") is "model" or "announced" ? ReadLabel(root, "mode") : null,
+            SignalType = ReadLabel(officialSignal, "signal_type") == "promise" ? "promise" : null,
+            SignalPercent = scoresAgree ? selectedScore : null,
+            SignalAt = ReadOptionalTimestamp(officialSignal, "at", checkedAt),
+            SignalId = signalId,
+            SignalUrl = ValidateSignalUrl(ReadSignalUrl(officialSignal), signalId),
             Confidence = ReadLabel(root, "confidence"),
             AlertKind = ReadLabel(alert, "kind") is "reset" or "watch" ? ReadLabel(alert, "kind") : null,
             AlertState = ReadLabel(alert, "state") is "active" or "expired" or "confirmed" ? ReadLabel(alert, "state") : null,
@@ -259,6 +316,44 @@ internal sealed class ResetForecastClient : IDisposable
         return snapshot.IsStale(checkedAt)
             ? snapshot with { IsLive = false, Error = "Forecast provider data is stale." }
             : snapshot;
+    }
+
+    private static JsonElement ObjectProperty(JsonElement element, string name) =>
+        element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Object
+            ? value : default;
+
+    private static int? ValidPercent(int? value) => value is >= 0 and <= 100 ? value : null;
+
+    private static int? ReadOptionalPercent(JsonElement element, string name) =>
+        element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out var value) &&
+        value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var percent)
+            ? ValidPercent(percent) : null;
+
+    private static DateTimeOffset? ReadOptionalTimestamp(JsonElement element, string name, DateTimeOffset now)
+    {
+        try { return ReadTimestamp(element, name, now); }
+        catch (InvalidDataException) { return null; }
+    }
+
+    private static string? ReadSignalUrl(JsonElement element) =>
+        element.ValueKind == JsonValueKind.Object && element.TryGetProperty("url", out var value) &&
+        value.ValueKind == JsonValueKind.String && value.GetString() is { Length: > 0 and <= 256 } url
+            ? url : null;
+
+    internal static string? ValidateSignalUrl(string? value, string? signalId)
+    {
+        if (signalId is not { Length: > 0 and <= 20 } || !signalId.All(char.IsAsciiDigit) ||
+            value is not { Length: > 0 and <= 256 } || value.Any(char.IsControl) ||
+            !Uri.TryCreate(value, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps ||
+            !uri.IsDefaultPort || uri.UserInfo.Length != 0 || uri.Query.Length != 0 || uri.Fragment.Length != 0 ||
+            uri.Host is not ("x.com" or "twitter.com"))
+        {
+            return null;
+        }
+        var segments = uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        return segments.Length == 3 && segments[0].Length is > 0 and <= 15 &&
+            segments[0].All(character => char.IsAsciiLetterOrDigit(character) || character == '_') &&
+            segments[1] == "status" && segments[2] == signalId ? uri.AbsoluteUri : null;
     }
 
     private static int? ReadPercent(JsonElement element, string name)

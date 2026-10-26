@@ -75,7 +75,7 @@ pwsh -File .\scripts\test.ps1
 dotnet format .\CodexUsageTray.slnx --verify-no-changes --no-restore
 ```
 
-The test project uses a package-free runner. The current suite contains 143 tests.
+The test project uses a package-free runner. The current suite contains 154 tests.
 
 Run from source:
 
@@ -86,21 +86,21 @@ dotnet run --project .\src\CodexUsageTray\CodexUsageTray.csproj -c Release
 Publish the application:
 
 ```powershell
-pwsh -File .\scripts\publish.ps1 -Version 2026.10.25.1
+pwsh -File .\scripts\publish.ps1 -Version 2026.10.26.1
 ```
 
 Create the installer ZIP:
 
 ```powershell
-pwsh -File .\scripts\package-release.ps1 -Version 2026.10.25.1
+pwsh -File .\scripts\package-release.ps1 -Version 2026.10.26.1
 ```
 
 Output:
 
 ```text
 artifacts\publish\win-x64\CodexUsageTray.exe
-artifacts\release\CodexUsageTray-2026.10.25.1-win-x64.zip
-artifacts\release\CodexUsageTray-2026.10.25.1-win-x64.zip.sha256
+artifacts\release\CodexUsageTray-2026.10.26.1-win-x64.zip
+artifacts\release\CodexUsageTray-2026.10.26.1-win-x64.zip.sha256
 ```
 
 The ZIP contains `CodexUsageTray-Setup.exe`, `CodexUsageTray.exe`, `README.txt`, `LICENSE.txt`, and `SHA256SUMS.txt`.
@@ -114,7 +114,7 @@ $thumbprint = Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert |
   Where-Object HasPrivateKey |
   Select-Object -First 1 -ExpandProperty Thumbprint
 pwsh -File .\scripts\package-release.ps1 `
-  -Version 2026.10.25.1 `
+  -Version 2026.10.26.1 `
   -CodeSigningThumbprint $thumbprint
 ```
 
@@ -147,7 +147,9 @@ Every popup style includes `Refresh` and `Close`. You can also close it with `Es
 
 The popup can show an independent community forecast for a global Codex reset within 24 and 48 hours, its confidence, last reported reset, and data age. This is separate from your account's exact quota reset and your reset-credit expiry. A community report does not prove that your account received a reset.
 
-The tray uses the free, keyless `https://codex-reset.com/api/forecast` API linked by [Tibo Reset](https://tiboreset.com/developers). It sends a project User-Agent, no account identifier or Authorization header, and shows **Data: codex-reset.com** with a source link. Forecast checks normally run every five minutes. Manual refresh and concurrent requests share a minimum one-minute interval, with Retry-After and backoff on failures. The menu can disable the forecast.
+The tray uses the free, keyless `https://codex-reset.com/api/forecast` API linked by [Tibo Reset](https://tiboreset.com/developers). It sends a project User-Agent, no account identifier or Authorization header, and shows **Data: codex-reset.com** with a source link. Forecast checks run every minute while the popup is visible and normally every five minutes while hidden, with an earlier check before a provider publication expires. Manual refresh and concurrent requests share a minimum one-minute interval, with Retry-After and backoff on failures. The menu can disable the forecast.
+
+Recognized, sourced reset promises appear separately as a provider Watch score, with the source post and its time. Model 24/48-hour probabilities stay separate; the Watch score never replaces them. Cached, expired or superseded promises cannot appear as current. Unknown or malformed optional signal fields do not discard otherwise valid forecast odds. `API fresh` describes response freshness; `Calculated` is the provider calculation time, not proof of new evidence. The Tibo website uses a different presentation and may show different numbers; the tray does not invent a matching percentage or scrape that page.
 
 On failure, the last good forecast remains marked stale; missing probabilities remain unavailable. Data older than 15 minutes is stale; a provider publication expiry can mark it stale sooner. Forecast data never changes your quota icon or redeems a reset credit.
 
@@ -155,7 +157,7 @@ On failure, the last good forecast remains marked stale; missing probabilities r
 
 Plus, Pro, and other signed-in ChatGPT plans use the rate-limit buckets actually returned by the local app-server. Plus can return a five-hour window and a weekly window; the app does not manufacture either window, a reset credit, or a fixed message allowance. A missing optional token-activity endpoint does not prevent quota updates. The tray checks for a changed Codex runtime every five minutes and after resume, respecting explicit CLI overrides and restarting only its own app-server child.
 
-Releases use **year.month.day.patch**, for example `2026.10.25.1` (the first release that day). All four parts are preserved in metadata, tags and canonical asset names. For migration from legacy `0.6.x` updaters, each release also includes an identical three-part-named compatibility ZIP. Both names contain the same verified binaries; use the four-part ZIP for manual installation.
+Releases use **year.month.day.patch**, for example `2026.10.26.1` (the first release that day). All four parts are preserved in metadata, tags and canonical asset names. For migration from legacy `0.6.x` updaters, each release also includes an identical three-part-named compatibility ZIP. Both names contain the same verified binaries; use the four-part ZIP for manual installation.
 
 ## Reset credits
 

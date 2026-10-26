@@ -26,6 +26,8 @@ Use the existing project structure and built-in .NET APIs. Do not add a NuGet pa
 - Treat optional or unknown account/usage fields as unavailable and keep the application running.
 - Support ChatGPT Plus and other plans from server-returned windows; never infer entitlement, fixed allowances, or reset-credit availability from the plan name.
 - Keep Tibo community forecasts separate from account quota and credit actions. Use the free public codex-reset.com API with project User-Agent, attribution, at least one minute between requests, and stale/unavailable states.
+- Keep explicit model 24/48-hour probabilities separate from sourced promise Watch scores. Never synthesize Tibo website percentages. Cached, expired, unknown or superseded signals cannot assert a current promise; source-post links require a validated HTTPS public post.
+- Forecast scheduling must respect provider publication expiry, the one-minute request minimum and Retry-After/backoff. API freshness and calculation time do not establish prediction accuracy or a new reset.
 - Read local session JSONL in read-only mode only for `cwd`, model, timestamp, and token counters.
 - Never read Codex authentication files or store prompts/responses.
 

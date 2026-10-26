@@ -123,6 +123,7 @@ internal static class UiUpgradeTests
                     popup.UpdateSnapshot(snapshot);
                     popup.Show();
                     Application.DoEvents();
+                    popup.UpdateResetForecast(ForecastPresentationTests.Promise(DateTimeOffset.UtcNow));
                     if (dpi != popup.DeviceDpi) SendDpiChange(popup, dpi);
                     Require(popup.DeviceDpi == dpi, "Synthetic WM_DPICHANGED did not set the requested DPI.");
                     var seen = new HashSet<string>();

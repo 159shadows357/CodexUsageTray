@@ -423,6 +423,11 @@ public sealed class TrayApplicationContext : ApplicationContext
             _resetForecast = _resetForecast with { IsLive = false, Error = "Forecast unavailable" };
             _popup.UpdateResetForecast(_resetForecast, _settings.ResetForecastEnabled);
         }
+        finally
+        {
+            _nextForecastCheckAt = ForecastRefreshSchedule.NextCheck(DateTimeOffset.Now, _popup.Visible,
+                _resetForecast.PublishedExpiresAt, _resetForecastClient.NextAllowedRequestAt);
+        }
     }
 
     private async Task RefreshOpenAiStatusAsync()
@@ -843,6 +848,9 @@ public sealed class TrayApplicationContext : ApplicationContext
         }
         _logger.Info("Usage popup opened.");
         _popup.ShowNearTray();
+        if (_settings.ResetForecastEnabled)
+            _nextForecastCheckAt = ForecastRefreshSchedule.OnPopupOpened(DateTimeOffset.Now, _nextForecastCheckAt,
+                _resetForecastClient.NextAllowedRequestAt);
         AccelerateRefreshForVisibleSurface();
     }
 
