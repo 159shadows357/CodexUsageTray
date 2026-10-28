@@ -96,7 +96,7 @@ internal static class ForecastTests
         using var handler = new ResponseHandler((request, _) =>
         {
             Equal(HttpMethod.Get, request.Method);
-            Equal("https://codex-reset.com/api/forecast", request.RequestUri?.AbsoluteUri);
+            Equal("https://tiboreset.com/wp-content/uploads/tiboreset/v1/notify.json", request.RequestUri?.AbsoluteUri);
             True(request.Headers.Authorization is null);
             True(!request.Headers.Contains("Cookie"));
             True(request.Headers.UserAgent.ToString().Contains("CodexUsageTray/", StringComparison.Ordinal));

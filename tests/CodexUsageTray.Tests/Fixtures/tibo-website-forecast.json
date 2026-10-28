@@ -1,0 +1,16 @@
+{
+  "answer": "promised",
+  "status": "none",
+  "prob_24": 99,
+  "prob_48": 99,
+  "promise_active": true,
+  "promise_quote": "Lands by midnight PST.",
+  "promise_url": "https://x.com/thsottiaux/status/2115273253711409208",
+  "tease_active": false,
+  "last_reset_id": "2114588174249071102",
+  "last_reset_at": "2026-10-26T06:08:46.000Z",
+  "forecast_updated_at": "2026-10-28T03:29:48.682Z",
+  "updated_at": "2026-10-28T03:30:59Z",
+  "delayed": false,
+  "source": "https://codex-reset.com/"
+}

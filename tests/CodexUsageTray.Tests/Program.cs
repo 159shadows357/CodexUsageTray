@@ -106,6 +106,7 @@ internal static class Program
         Tests.AddRange(RootUpgradeTests.Cases);
         Tests.AddRange(CoreUpgradeTests.Cases);
         Tests.AddRange(ForecastTests.Cases);
+        Tests.AddRange(TiboWebsiteForecastTests.Cases);
         Tests.AddRange(ForecastSignalTests.Cases);
         Tests.AddRange(ForecastPresentationTests.Cases);
         Tests.AddRange(UiUpgradeTests.Cases);

@@ -89,6 +89,7 @@ public sealed partial class UsagePopupForm : Form
     {
         _snapshot = snapshot;
         _forecastFreshnessState = ForecastFreshnessState(now);
+        _forecastCalculationAge = ForecastCalculationAge(now);
         var displaySnapshot = snapshot with { Buckets = PopupBuckets(snapshot).ToList() };
         var restoreFocus = _renderDepth == 0 && Visible && ContainsFocus;
         _renderDepth++;
@@ -172,7 +173,8 @@ public sealed partial class UsagePopupForm : Form
 
     internal void RefreshForecastFreshness(DateTimeOffset now)
     {
-        if (!_resetForecastEnabled || ForecastFreshnessState(now) == _forecastFreshnessState) return;
+        if (!_resetForecastEnabled || ForecastFreshnessState(now) == _forecastFreshnessState &&
+            ForecastCalculationAge(now) == _forecastCalculationAge) return;
         RenderSnapshot(_snapshot, now);
     }
 
@@ -1494,9 +1496,9 @@ public sealed partial class UsagePopupForm : Form
         return CultureInfo.GetCultureInfo("en-US").TextInfo.ToTitleCase(words.ToLowerInvariant());
     }
 
-    private static string FormatUpdatedAge(DateTimeOffset updatedAt)
+    private static string FormatUpdatedAge(DateTimeOffset updatedAt, DateTimeOffset? now = null)
     {
-        var age = DateTimeOffset.Now - updatedAt;
+        var age = (now ?? DateTimeOffset.Now) - updatedAt;
         if (age < TimeSpan.Zero || age < TimeSpan.FromMinutes(1)) return "just now";
         if (age < TimeSpan.FromHours(1)) return $"{(int)age.TotalMinutes}m ago";
         if (age < TimeSpan.FromDays(1)) return $"{(int)age.TotalHours}h ago";

@@ -32,6 +32,8 @@ internal sealed record ResetForecastSnapshot
     public string? ConfirmationSource { get; init; }
     public string? Error { get; init; }
     public bool IsLive { get; init; }
+    public bool IsWebsiteForecast { get; init; }
+    public bool WebsitePromiseActive { get; init; }
 
     public bool IsStale(DateTimeOffset now) =>
         !IsLive || Error is not null || UpdatedAt is null ||
@@ -62,7 +64,7 @@ internal sealed record ResetForecastSnapshot
 
 internal sealed class ResetForecastClient : IDisposable
 {
-    internal const string ForecastUrl = "https://codex-reset.com/api/forecast";
+    internal const string ForecastUrl = "https://tiboreset.com/wp-content/uploads/tiboreset/v1/notify.json";
     private const int MaximumBodyBytes = 256 * 1024;
     private static readonly TimeSpan MinimumRequestInterval = TimeSpan.FromMinutes(1);
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(10);
@@ -165,6 +167,7 @@ internal sealed class ResetForecastClient : IDisposable
             timeout.CancelAfter(RequestTimeout);
             using var request = new HttpRequestMessage(HttpMethod.Get, ForecastUrl);
             request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+            request.Headers.CacheControl = new CacheControlHeaderValue { NoCache = true };
             var version = typeof(ResetForecastClient).Assembly.GetName().Version?.ToString() ?? "1.0";
             request.Headers.UserAgent.ParseAdd($"CodexUsageTray/{version} (+https://github.com/159shadows357/CodexUsageTray)");
             using var response = await _client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token).ConfigureAwait(false);
@@ -198,7 +201,9 @@ internal sealed class ResetForecastClient : IDisposable
             };
             lock (_sync)
             {
-                if (_snapshot.UpdatedAt is { } previousUpdate && (!snapshot.IsLive || snapshot.UpdatedAt < previousUpdate))
+                if (_snapshot.IsWebsiteForecast == snapshot.IsWebsiteForecast &&
+                    _snapshot.UpdatedAt is { } previousUpdate && (!snapshot.IsLive || snapshot.UpdatedAt < previousUpdate ||
+                    snapshot.IsWebsiteForecast && snapshot.PublishedCheckedAt < _snapshot.PublishedCheckedAt))
                 {
                     snapshot = _snapshot with
                     {
@@ -261,6 +266,11 @@ internal sealed class ResetForecastClient : IDisposable
     internal static ResetForecastSnapshot ParseForecast(JsonElement root, DateTimeOffset checkedAt,
         DateTimeOffset? publishedCheckedAt = null, DateTimeOffset? publishedExpiresAt = null)
     {
+        if (root.ValueKind == JsonValueKind.Object &&
+            (root.TryGetProperty("prob_24", out _) || root.TryGetProperty("prob_48", out _)))
+        {
+            return ParseWebsiteForecast(root, checkedAt, publishedExpiresAt);
+        }
         if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("probabilities", out var probabilities) ||
             probabilities.ValueKind != JsonValueKind.Object)
         {
@@ -299,7 +309,7 @@ internal sealed class ResetForecastClient : IDisposable
             ModelProbability24Hours = ReadOptionalPercent(probabilities, "model_24h"),
             ModelProbability48Hours = ReadOptionalPercent(probabilities, "model_48h"),
             ForecastMode = ReadLabel(root, "mode") is "model" or "announced" ? ReadLabel(root, "mode") : null,
-            SignalType = ReadLabel(officialSignal, "signal_type") == "promise" ? "promise" : null,
+            SignalType = ReadLabel(officialSignal, "signal_type") is "promise" or "dated_commitment" ? "promise" : null,
             SignalPercent = scoresAgree ? selectedScore : null,
             SignalAt = ReadOptionalTimestamp(officialSignal, "at", checkedAt),
             SignalId = signalId,
@@ -315,6 +325,46 @@ internal sealed class ResetForecastClient : IDisposable
         };
         return snapshot.IsStale(checkedAt)
             ? snapshot with { IsLive = false, Error = "Forecast provider data is stale." }
+            : snapshot;
+    }
+
+    private static ResetForecastSnapshot ParseWebsiteForecast(JsonElement root, DateTimeOffset checkedAt,
+        DateTimeOffset? publishedExpiresAt)
+    {
+        var probability24 = ReadPercent(root, "prob_24") ?? throw new InvalidDataException("Website 24-hour odds are unavailable.");
+        var probability48 = ReadPercent(root, "prob_48") ?? throw new InvalidDataException("Website 48-hour odds are unavailable.");
+        var updatedAt = ReadTimestamp(root, "forecast_updated_at", checkedAt)
+            ?? throw new InvalidDataException("Website forecast calculation time is unavailable.");
+        var publishedAt = ReadTimestamp(root, "updated_at", checkedAt)
+            ?? throw new InvalidDataException("Website publication time is unavailable.");
+        if (publishedAt < updatedAt || publishedExpiresAt < publishedAt)
+        {
+            throw new InvalidDataException("Website publication times are invalid.");
+        }
+        var signalUrl = ReadSignalUrl(root, "promise_url");
+        var signalId = signalUrl?.Split('/').LastOrDefault();
+        signalUrl = ValidateSignalUrl(signalUrl, signalId);
+        var delayed = !root.TryGetProperty("delayed", out var delayedValue) || delayedValue.ValueKind != JsonValueKind.False;
+        var promise = root.TryGetProperty("promise_active", out var promiseValue) && promiseValue.ValueKind == JsonValueKind.True;
+        var snapshot = new ResetForecastSnapshot
+        {
+            IsWebsiteForecast = true,
+            WebsitePromiseActive = promise && signalUrl is not null,
+            CheckedAt = checkedAt,
+            UpdatedAt = updatedAt,
+            PublishedCheckedAt = publishedAt,
+            PublishedExpiresAt = publishedExpiresAt,
+            LastResetAt = ReadTimestamp(root, "last_reset_at", checkedAt),
+            Probability24Hours = probability24,
+            Probability48Hours = probability48,
+            ForecastMode = promise ? "announced" : "model",
+            SignalId = signalUrl is null ? null : signalId,
+            SignalUrl = signalUrl,
+            IsLive = !delayed,
+            Error = delayed ? "Tibo website feed is delayed or its freshness is unavailable." : null
+        };
+        return snapshot.IsStale(checkedAt)
+            ? snapshot with { IsLive = false, Error = snapshot.Error ?? "Tibo website forecast is stale." }
             : snapshot;
     }
 
@@ -335,8 +385,8 @@ internal sealed class ResetForecastClient : IDisposable
         catch (InvalidDataException) { return null; }
     }
 
-    private static string? ReadSignalUrl(JsonElement element) =>
-        element.ValueKind == JsonValueKind.Object && element.TryGetProperty("url", out var value) &&
+    private static string? ReadSignalUrl(JsonElement element, string name = "url") =>
+        element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out var value) &&
         value.ValueKind == JsonValueKind.String && value.GetString() is { Length: > 0 and <= 256 } url
             ? url : null;
 

@@ -11,10 +11,111 @@ internal static class ForecastPresentationTests
     internal static IEnumerable<(string Name, Func<Task> Run)> Cases =>
     [
         ("promise watch score and model odds remain distinct in every popup style", () => OnSta(PromisePresentation)),
+        ("dated commitments show the API watch score in every popup style", () => OnSta(DatedCommitmentPresentation)),
+        ("Tibo website percentages stay primary in every popup style", () => OnSta(WebsitePresentation)),
+        ("cached stale and unverified website promises are not current", () => OnSta(InactiveWebsitePromises)),
         ("stale and superseded promises never remain current popup headlines", () => OnSta(InactivePromises)),
         ("model calculation time is distinct from API freshness", () => OnSta(CalculationAge)),
+        ("forecast calculation age advances without new API or quota data", () => OnSta(CalculationAgeAdvances)),
         ("forecast refresh follows visibility publication expiry and provider backoff", RefreshSchedule)
     ];
+
+    private static void WebsitePresentation()
+    {
+        var now = DateTimeOffset.UtcNow;
+        foreach (var style in Enum.GetValues<PopupStyle>())
+        {
+            using var popup = new UsagePopupForm(false, style);
+            popup.UpdateResetForecast(Website(now));
+            var text = Text(popup);
+            Require(text.Contains("Tibo: 24h 99% · 48h 99%", StringComparison.Ordinal), $"{style}: website percentages were replaced.");
+            Require(text.Contains("Website: Promised", StringComparison.Ordinal), $"{style}: current website promise is missing.");
+            Require(!text.Contains("Watch", StringComparison.Ordinal) && !text.Contains("Model:", StringComparison.Ordinal),
+                "API Watch or model values replaced the website forecast.");
+            var links = Descendants(popup).OfType<LinkLabel>().SelectMany(link => link.Links.Cast<LinkLabel.Link>()).ToList();
+            Require(links.Any(link => link.LinkData as string == "https://tiboreset.com/forecast"), "Website forecast has no Tibo UI link.");
+            Require(links.Any(link => link.LinkData as string == "https://codex-reset.com/"), "Website forecast lost provider attribution.");
+            Require(links.Any(link => link.LinkData as string == "https://x.com/thsottiaux/status/1234567890"), "Website promise lost its validated source post.");
+            AssertFits(popup);
+            popup.UpdateResetForecast(Website(now) with { WebsitePromiseActive = false });
+            Require(!Text(popup).Contains("Website: Promised", StringComparison.Ordinal), "The website's inactive promise was displayed as current.");
+            Require(Text(popup).Contains("Tibo: 24h 99% · 48h 99%", StringComparison.Ordinal), "An inactive promise removed sourced website percentages.");
+            AssertFits(popup);
+        }
+    }
+
+    private static void InactiveWebsitePromises()
+    {
+        var now = DateTimeOffset.UtcNow;
+        foreach (var style in Enum.GetValues<PopupStyle>())
+        {
+            using var popup = new UsagePopupForm(false, style);
+            foreach (var inactive in new[]
+            {
+                Website(now) with { IsLive = false },
+                Website(now) with { PublishedExpiresAt = now.AddSeconds(-1) },
+                Website(now) with { Error = "Provider unavailable." },
+                Website(now) with { SignalUrl = "https://evil.example/thsottiaux/status/1234567890" }
+            })
+            {
+                popup.UpdateResetForecast(inactive);
+                var text = Text(popup);
+                Require(!text.Contains("Website: Promised", StringComparison.Ordinal), $"{style}: an inactive or unverified website promise was displayed as current.");
+                Require(text.Contains("Tibo: 24h 99% · 48h 99%", StringComparison.Ordinal), "An inactive promise removed the website forecast.");
+                Require(!Descendants(popup).OfType<LinkLabel>().SelectMany(link => link.Links.Cast<LinkLabel.Link>()).Any(link =>
+                    link.LinkData as string == inactive.SignalUrl), "An inactive website promise retained a current source-post action.");
+            }
+            popup.UpdateResetForecast(Website(now) with { PublishedExpiresAt = now.AddSeconds(1) });
+            popup.RefreshForecastFreshness(now.AddSeconds(2));
+            Require(Text(popup).Contains("Stale", StringComparison.Ordinal) && !Text(popup).Contains("Website: Promised", StringComparison.Ordinal),
+                "Website promise remained current after publication expiry without new data.");
+        }
+    }
+
+    private static ResetForecastSnapshot Website(DateTimeOffset now) => new()
+    {
+        IsWebsiteForecast = true,
+        WebsitePromiseActive = true,
+        IsLive = true,
+        CheckedAt = now,
+        UpdatedAt = now,
+        PublishedExpiresAt = now.AddMinutes(3),
+        Probability24Hours = 99,
+        Probability48Hours = 99,
+        LastResetAt = now.AddDays(-1),
+        SignalId = "1234567890",
+        SignalUrl = "https://x.com/thsottiaux/status/1234567890"
+    };
+
+    private static void DatedCommitmentPresentation()
+    {
+        foreach (var style in Enum.GetValues<PopupStyle>())
+        {
+            using var popup = new UsagePopupForm(false, style);
+            popup.UpdateResetForecast(Promise(DateTimeOffset.UtcNow, "dated_commitment", 93));
+            Require(Text(popup).Contains("Reset promised · Watch 93%", StringComparison.Ordinal), $"{style}: dated commitment is hidden.");
+            Require(Text(popup).Contains("Model: 24h 44%", StringComparison.Ordinal), "Watch score overwrote model odds.");
+            Require(!Text(popup).Contains("99%", StringComparison.Ordinal), "The popup invented the Tibo page percentage.");
+            AssertFits(popup);
+        }
+    }
+
+    private static void CalculationAgeAdvances()
+    {
+        foreach (var style in Enum.GetValues<PopupStyle>())
+        {
+            var now = DateTimeOffset.UtcNow;
+            using var popup = new UsagePopupForm(false, style);
+            popup.UpdateResetForecast(Promise(now));
+            var card = Descendants(popup).Single(control => control.AccessibleName == "Reset forecast");
+            popup.RefreshForecastFreshness(now.AddSeconds(30));
+            Require(ReferenceEquals(card, Descendants(popup).Single(control => control.AccessibleName == "Reset forecast")),
+                "Unchanged age rebuilt the forecast card.");
+            popup.RefreshForecastFreshness(now.AddMinutes(2));
+            Require(Text(popup).Contains("Calculated 2m ago", StringComparison.Ordinal), $"{style}: calculation age froze while API remained fresh.");
+            Require(Text(popup).Contains("API fresh", StringComparison.Ordinal), "An age update changed API freshness.");
+        }
+    }
 
     private static void PromisePresentation()
     {
@@ -92,7 +193,7 @@ internal static class ForecastPresentationTests
         return Task.CompletedTask;
     }
 
-    internal static ResetForecastSnapshot Promise(DateTimeOffset now)
+    internal static ResetForecastSnapshot Promise(DateTimeOffset now, string signalType = "promise", int score = 83)
     {
         using var document = JsonDocument.Parse(JsonSerializer.Serialize(new
         {
@@ -100,14 +201,14 @@ internal static class ForecastPresentationTests
             updated_at = now.ToString("O"),
             last_reset_at = now.AddDays(-1).ToString("O"),
             confidence = "low",
-            probabilities = new { rounded_24h = 44, rounded_48h = 69, model_24h = 44, model_48h = 69, signal_percent = 83 },
+            probabilities = new { rounded_24h = 44, rounded_48h = 69, model_24h = 44, model_48h = 69, signal_percent = score },
             official_signal = new
             {
                 tweet_id = "1234567890",
-                signal_type = "promise",
+                signal_type = signalType,
                 at = now.AddMinutes(-5).ToString("O"),
                 url = "https://x.com/thsottiaux/status/1234567890",
-                score = new { value = 83 }
+                score = new { value = score }
             }
         }));
         return ResetForecastClient.ParseForecast(document.RootElement, now);
@@ -119,7 +220,7 @@ internal static class ForecastPresentationTests
         Require(!popup.Controls.OfType<FlowLayoutPanel>().Single().AutoScroll, "Forecast added popup scrollbars.");
         var card = Descendants(popup).Single(control => control.AccessibleName == "Reset forecast");
         var title = card.Controls.Cast<Control>().Single(control => control.Text == "Reset forecast");
-        var freshness = card.Controls.Cast<Control>().Single(control => control.Text == "API fresh");
+        var freshness = card.Controls.Cast<Control>().Single(control => control.Text is "API fresh" or "Tibo fresh");
         Require(!title.Bounds.IntersectsWith(freshness.Bounds), "The forecast title covers its API freshness badge.");
         foreach (var control in Descendants(popup))
         {

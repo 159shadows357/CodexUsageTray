@@ -70,8 +70,9 @@ compatibility ZIP contains identical verified binaries for older updaters.
 Tibo forecast and themes
 -----------------------
 Cadra Light and Cadra Dark are available alongside all original popup styles.
-The optional Tibo reset forecast uses a free public API with no account data.
-Data: https://codex-reset.com/ (linked by https://tiboreset.com/developers).
+The optional Tibo reset forecast uses the public JSON feed that updates Tibo's UI.
+Its 24/48-hour percentages match that feed. No account data is sent.
+UI: https://tiboreset.com/forecast | Data: https://codex-reset.com/
 It is a community global-reset prediction, separate from your account quota
 and reset-credit expiry. Missing or old data is labeled unavailable or stale.
 Use Tibo forecast > Show community forecast to disable it.

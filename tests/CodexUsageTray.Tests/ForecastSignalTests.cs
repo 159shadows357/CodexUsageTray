@@ -13,6 +13,7 @@ internal static class ForecastSignalTests
     internal static IEnumerable<(string Name, Func<Task> Run)> Cases =>
     [
         ("forecast promise preserves source score separately from model odds", PromiseAndModel),
+        ("live dated commitments retain their sourced watch score", DatedCommitment),
         ("forecast promise is retired by a newer reset or non-announced mode", SupersededPromise),
         ("stale failed and publication-expired data cannot assert an active promise", StalePromise),
         ("unknown and malformed optional signal fields preserve usable model odds", OptionalSignals),
@@ -20,6 +21,23 @@ internal static class ForecastSignalTests
         ("forecast signal fields survive cache serialization but remain inactive after restart", SignalCache),
         ("legacy forecast caches remain usable without a promise", LegacyCache)
     ];
+
+    private static Task DatedCommitment()
+    {
+        var body = Body();
+        body["official_signal"]!["signal_type"] = "dated_commitment";
+        body["probabilities"]!["signal_percent"] = 93;
+        body["official_signal"]!["score"]!["value"] = 93;
+        body["signal_score"]!["value"] = 93;
+        var snapshot = Parse(body);
+        Require(Active(snapshot), "The live API's dated commitment was discarded.");
+        Equal<int?>(93, snapshot.SignalPercent);
+        Equal(PostUrl, snapshot.SignalUrl);
+        ModelUnchanged(snapshot);
+        Require(!Active(snapshot with { IsLive = false }), "A cached dated commitment became current.");
+        Require(!Active(snapshot with { LastResetAt = Now }), "A superseded dated commitment became current.");
+        return Task.CompletedTask;
+    }
 
     private static Task PromiseAndModel()
     {

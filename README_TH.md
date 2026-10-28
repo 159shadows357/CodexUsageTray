@@ -45,7 +45,7 @@ pwsh -File .\scripts\build.ps1
 pwsh -File .\scripts\test.ps1
 ```
 
-test project ใช้ package-free runner และไม่เพิ่ม NuGet test framework ผลล่าสุดคือ 154 tests ผ่านทั้งหมด
+test project ใช้ package-free runner และไม่เพิ่ม NuGet test framework ผลล่าสุดคือ 165 tests ผ่านทั้งหมด
 
 ## Run จาก source
 
@@ -58,7 +58,7 @@ dotnet run --project .\src\CodexUsageTray\CodexUsageTray.csproj -c Release
 ## Publish
 
 ```powershell
-pwsh -File .\scripts\publish.ps1 -Version 2026.10.26.1
+pwsh -File .\scripts\publish.ps1 -Version 2026.10.28.1
 ```
 
 ผลลัพธ์:
@@ -102,7 +102,7 @@ uninstall จะเก็บ settings, cache และ logs ใต้ `%LOCALAPP
 ## สร้าง ZIP สำหรับติดตั้งเครื่องอื่น
 
 ```powershell
-pwsh -File .\scripts\package-release.ps1 -Version 2026.10.26.1
+pwsh -File .\scripts\package-release.ps1 -Version 2026.10.28.1
 ```
 
 script จะ publish application ล่าสุดก่อนสร้าง Setup และ ZIP ใช้ `-SkipAppPublish` ได้เมื่อยืนยันแล้วว่า `artifacts\publish\win-x64` เป็น build ที่ต้องการ
@@ -110,7 +110,7 @@ script จะ publish application ล่าสุดก่อนสร้าง 
 ผลลัพธ์:
 
 ```text
-artifacts\release\CodexUsageTray-2026.10.26.1-win-x64.zip
+artifacts\release\CodexUsageTray-2026.10.28.1-win-x64.zip
 ```
 
 ภายใน ZIP มี `CodexUsageTray-Setup.exe`, application payload, `README.txt`, `LICENSE.txt` และ `SHA256SUMS.txt` ผู้ใช้ต้อง extract ทุกไฟล์แล้วดับเบิลคลิก Setup ตัว installer ใช้สิทธิ์ current user, เปิด Start with Windows เป็นค่า default และไม่ต้องติดตั้ง .NET เพิ่ม
@@ -134,7 +134,7 @@ $thumbprint = Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert |
   Where-Object HasPrivateKey |
   Select-Object -First 1 -ExpandProperty Thumbprint
 pwsh -File .\scripts\package-release.ps1 `
-  -Version 2026.10.26.1 `
+  -Version 2026.10.28.1 `
   -CodeSigningThumbprint $thumbprint
 ```
 
@@ -177,11 +177,11 @@ pwsh -File .\scripts\start-with-windows.ps1 -Disable
 
 ## Tibo reset forecast
 
-popup แสดงโอกาสรีเซ็ต Codex ส่วนกลางภายใน 24/48 ชั่วโมง ความเชื่อมั่น รีเซ็ตล่าสุดที่แหล่งข้อมูลรายงาน และอายุข้อมูล แยกจากเวลารีเซ็ตโควตาของบัญชีจริงและวันหมดอายุ reset credit การรายงานจากชุมชนไม่ยืนยันว่าบัญชีผู้ใช้ได้รับรีเซ็ตแล้ว
+popup แสดงโอกาสรีเซ็ต Codex ส่วนกลางภายใน 24/48 ชั่วโมงตามหน้า Tibo Reset รีเซ็ตล่าสุดที่แหล่งข้อมูลรายงาน และอายุข้อมูล แยกจากเวลารีเซ็ตโควตาของบัญชีจริงและวันหมดอายุ reset credit การรายงานจากชุมชนไม่ยืนยันว่าบัญชีผู้ใช้ได้รับรีเซ็ตแล้ว
 
-ใช้ API ฟรีไม่ต้องมี key ที่ `https://codex-reset.com/api/forecast` ตาม [Tibo Reset Developers](https://tiboreset.com/developers) ส่ง User-Agent ของโครงการ ไม่ส่งข้อมูลบัญชีหรือ Authorization และแสดง **Data: codex-reset.com** พร้อมลิงก์แหล่งข้อมูล ตรวจทุก 1 นาทีขณะเปิด popup และปกติทุก 5 นาทีขณะซ่อน โดยตรวจเร็วขึ้นก่อนข้อมูลต้นทางหมดอายุ manual/concurrent refresh ใช้ throttle ร่วมกันอย่างน้อย 1 นาที และเคารพ Retry-After/backoff ปิดส่วน forecast ได้จากเมนู
+อ่าน [Tibo UI JSON feed](https://tiboreset.com/wp-content/uploads/tiboreset/v1/notify.json) ซึ่งเป็นไฟล์เดียวกับที่ [หน้า Forecast ของ Tibo](https://tiboreset.com/forecast) ใช้อัปเดตเปอร์เซ็นต์ ใช้ `prob_24` และ `prob_48` ตรงจาก feed ไม่ดึง HTML หรือแปลงคะแนนอื่นให้เป็นเปอร์เซ็นต์หน้าเว็บ ส่ง User-Agent ของโครงการ ไม่ส่งข้อมูลบัญชีหรือ Authorization และแสดง **Data: codex-reset.com** พร้อมลิงก์ **Tibo UI** ตรวจทุก 1 นาทีขณะเปิด popup และปกติทุก 5 นาทีขณะซ่อน manual/concurrent refresh ใช้ throttle ร่วมกันอย่างน้อย 1 นาที และเคารพ Retry-After/backoff ปิดส่วน forecast ได้จากเมนู
 
-เมื่อ API ส่งประกาศรีเซ็ตที่มีโพสต์และเวลาต้นทาง จะขึ้นสถานะประกาศพร้อมคะแนน Watch แยกจากโอกาสจากแบบจำลอง 24/48 ชั่วโมง มีลิงก์ตรวจโพสต์ ข้อมูล cache ที่หมดอายุหรือมีรีเซ็ตใหม่แทนที่แล้วจะไม่ขึ้นเป็นประกาศปัจจุบัน ข้อมูลสัญญาณที่ไม่รู้จักไม่ทำให้ค่าคาดการณ์ที่ยังใช้ได้หายไป `API fresh` หมายถึงข้อมูล API ยังสด และ `Calculated` คือเวลาคำนวณของผู้ให้บริการ ไม่ใช่หลักฐานว่ามีเหตุการณ์ใหม่ หน้าเว็บ Tibo อาจแสดงเลขต่างกัน จึงไม่สร้างเปอร์เซ็นต์ให้ตรงเว็บหรือดึง HTML มาแทน API
+แสดงสถานะประกาศของหน้าเว็บเมื่อข้อมูลสดจาก feed และมีลิงก์โพสต์ต้นทางที่ตรวจสอบแล้ว ข้อมูล cache ที่เก่า ล่าช้า หรือหมดอายุจะไม่ขึ้นเป็นประกาศปัจจุบัน `Tibo fresh` หมายถึง feed ยังสด และ `Calculated` ใช้ `forecast_updated_at` แทนเวลาที่ดึงข้อมูล อายุข้อมูลบน popup เดินตามเวลาโดยไม่เรียกเพิ่ม API ของ codex-reset.com อาจส่งค่า model และ Watch ต่างจากหน้าเว็บ ค่าเหล่านั้นจะไม่แทนเปอร์เซ็นต์จาก UI ส่วน cache API รุ่นเดิมจะมีป้ายกำกับจนกว่าดึงข้อมูลหน้าเว็บสำเร็จครั้งแรก
 
 หากเรียกไม่สำเร็จจะเก็บค่าล่าสุดพร้อมสถานะข้อมูลเก่า ถ้าไม่รู้เปอร์เซ็นต์จะแสดง unavailable ไม่ใช้ 0% แทน ข้อมูลเกิน 15 นาทีถือว่าเก่า และวันหมดอายุข้อมูลจาก provider อาจทำให้ถือว่าเก่าก่อนถึงช่วงนั้น ข้อมูล forecast ไม่เปลี่ยนไอคอนโควตาและไม่ใช้ reset credit
 
@@ -189,7 +189,7 @@ popup แสดงโอกาสรีเซ็ต Codex ส่วนกลา�
 
 Plus, Pro และแผน ChatGPT อื่นอ่าน bucket ที่ local app-server ส่งมาจริง Plus อาจมีรอบ 5 ชั่วโมงและรายสัปดาห์ โปรแกรมไม่สร้างรอบโควตา จำนวนข้อความ หรือสิทธิ reset credit จากชื่อแผน หาก optional token-activity endpoint ใช้ไม่ได้ โควตายังอัปเดตได้ ตรวจ runtime Codex ที่เปลี่ยนทุก 5 นาทีและหลัง resume โดยเคารพ explicit CLI override และ reconnect เฉพาะ child app-server ของ tray
 
-ใช้เลขเวอร์ชัน **year.month.day.patch** เช่น `2026.10.26.1` คือ release แรกของวันนั้น เก็บครบสี่ส่วนใน metadata, tag และชื่อ ZIP หลัก มี ZIP ชื่อสามส่วนที่มี binary เหมือนกันทุก byte เพื่อให้ updater รุ่น `0.6.x` อัปเดตข้ามมาได้ หากติดตั้งเองให้เลือก ZIP ชื่อสี่ส่วน
+ใช้เลขเวอร์ชัน **year.month.day.patch** เช่น `2026.10.28.1` คือ release แรกของวันนั้น เก็บครบสี่ส่วนใน metadata, tag และชื่อ ZIP หลัก มี ZIP ชื่อสามส่วนที่มี binary เหมือนกันทุก byte เพื่อให้ updater รุ่น `0.6.x` อัปเดตข้ามมาได้ หากติดตั้งเองให้เลือก ZIP ชื่อสี่ส่วน
 
 ## Reset credits
 

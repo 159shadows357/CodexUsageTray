@@ -11,6 +11,7 @@ public sealed partial class UsagePopupForm
     private bool _denseLayout;
     private int _bucketPageIndex;
     private string _forecastFreshnessState = "Unavailable";
+    private string _forecastCalculationAge = "Calculation time unavailable";
 
     private bool IsCadraStyle => _popupStyle is PopupStyle.CadraLight or PopupStyle.CadraDark;
     private int ScaleUi(int value) => (int)Math.Round(value * DeviceDpi / 96d);
@@ -290,41 +291,54 @@ public sealed partial class UsagePopupForm
         var title = DashboardLabel("Reset forecast", 10, FontStyle.Bold, palette.Text);
         title.SetBounds(inset, ScaleUi(8), availableWidth - ScaleUi(94), ScaleUi(22));
         var state = _forecastFreshnessState;
-        var activePromise = state == "Live" && _resetForecast.HasActivePromise(DateTimeOffset.UtcNow);
-        var freshness = DashboardLabel(state == "Live" ? "API fresh" : $"API {state}", 8.5f, FontStyle.Bold, state == "Stale" ? palette.Warn : palette.Muted);
+        var websiteForecast = _resetForecast.IsWebsiteForecast;
+        var activeWebsitePromise = websiteForecast && state == "Live" && _resetForecast.WebsitePromiseActive &&
+            ResetForecastClient.ValidateSignalUrl(_resetForecast.SignalUrl, _resetForecast.SignalId) is not null;
+        var activePromise = !websiteForecast && state == "Live" && _resetForecast.HasActivePromise(DateTimeOffset.UtcNow);
+        var sourceName = websiteForecast ? "Tibo" : "API";
+        var freshness = DashboardLabel(state == "Live" ? $"{sourceName} fresh" : $"{sourceName} {state}", 8.5f, FontStyle.Bold, state == "Stale" ? palette.Warn : palette.Muted);
         freshness.TextAlign = ContentAlignment.TopRight;
         freshness.SetBounds(card.Width - ScaleUi(100), ScaleUi(10), ScaleUi(86), ScaleUi(20));
         var modelOdds = _resetForecast.ModelProbability24Hours is not null || _resetForecast.ModelProbability48Hours is not null
             ? $"Model: 24h {FormatProbability(_resetForecast.ModelProbability24Hours)} · 48h {FormatProbability(_resetForecast.ModelProbability48Hours)}"
             : $"API: 24h {FormatProbability(_resetForecast.Probability24Hours)} · 48h {FormatProbability(_resetForecast.Probability48Hours)}";
-        var headline = activePromise
-            ? _resetForecast.SignalPercent is { } score ? $"Reset promised · Watch {score}%" : "Reset promised · score unavailable"
-            : modelOdds;
+        var headline = websiteForecast
+            ? $"Tibo: 24h {FormatProbability(_resetForecast.Probability24Hours)} · 48h {FormatProbability(_resetForecast.Probability48Hours)}"
+            : activePromise
+                ? _resetForecast.SignalPercent is { } score ? $"Reset promised · Watch {score}%" : "Reset promised · score unavailable"
+                : modelOdds;
         var probabilities = DashboardLabel(headline, 11, FontStyle.Bold, palette.Accent);
         probabilities.SetBounds(inset, ScaleUi(_compactLayout ? 28 : 33), availableWidth, ScaleUi(24));
-        var calculated = _resetForecast.UpdatedAt is null ? "Calculation time unavailable" : $"Calculated {FormatUpdatedAge(_resetForecast.UpdatedAt.Value)}";
-        var confidence = DashboardLabel(activePromise
-            ? $"{modelOdds} · {_resetForecast.Confidence ?? "unavailable"} confidence"
-            : $"Confidence: {_resetForecast.Confidence ?? "unavailable"} · {calculated}", 8.5f, FontStyle.Regular, palette.Muted);
+        var calculated = _forecastCalculationAge;
+        var confidence = DashboardLabel(websiteForecast ? calculated
+            : activePromise
+                ? $"{modelOdds} · {_resetForecast.Confidence ?? "unavailable"} confidence"
+                : $"Confidence: {_resetForecast.Confidence ?? "unavailable"} · {calculated}", 8.5f, FontStyle.Regular, palette.Muted);
         confidence.SetBounds(inset, ScaleUi(_compactLayout ? 51 : 59), availableWidth, ScaleUi(20));
         var lastReset = DashboardLabel(
             $"Last reported reset: {(_resetForecast.LastResetAt is null ? "unavailable" : FormatResetCreditExpiry(_resetForecast.LastResetAt.Value.ToLocalTime()))}",
             8.5f, FontStyle.Regular, palette.Muted);
         lastReset.SetBounds(inset, ScaleUi(_compactLayout ? 71 : 79), availableWidth, ScaleUi(20));
-        var signal = DashboardLabel(activePromise
-            ? $"Posted {FormatResetCreditExpiry(_resetForecast.SignalAt!.Value.ToLocalTime())}"
-            : FormatForecastSignal(), 8.5f, FontStyle.Regular, palette.Muted);
+        var websiteState = state != "Live" ? state : activeWebsitePromise ? "Promised"
+            : _resetForecast.WebsitePromiseActive ? "Promise unverified" : "No active promise";
+        var signal = DashboardLabel(websiteForecast ? $"Website: {websiteState}"
+            : activePromise
+                ? $"Posted {FormatResetCreditExpiry(_resetForecast.SignalAt!.Value.ToLocalTime())}"
+                : FormatForecastSignal(), 8.5f, FontStyle.Regular, palette.Muted);
         signal.SetBounds(inset, ScaleUi(_compactLayout ? 91 : 99), availableWidth, ScaleUi(20));
         var qualifier = DashboardLabel(activePromise ? $"{calculated} · account reset not guaranteed"
             : "Community prediction · account reset not guaranteed", 8, FontStyle.Regular, palette.Muted);
         qualifier.SetBounds(inset, ScaleUi(_compactLayout ? 111 : 120), availableWidth, ScaleUi(20));
-        var source = CreateProviderLink(palette.Accent, activePromise ? _resetForecast.SignalUrl : null);
+        var source = CreateProviderLink(palette.Accent, activePromise || activeWebsitePromise ? _resetForecast.SignalUrl : null, websiteForecast);
         source.SetBounds(inset, ScaleUi(_compactLayout ? 131 : 141), availableWidth, ScaleUi(20));
         card.Controls.AddRange([title, freshness, probabilities, confidence, lastReset, signal, qualifier, source]);
         _content.Controls.Add(card);
     }
 
     private static string FormatProbability(int? value) => value is >= 0 and <= 100 ? $"{value}%" : "unavailable";
+
+    private string ForecastCalculationAge(DateTimeOffset now) => _resetForecast.UpdatedAt is { } updatedAt
+        ? $"Calculated {FormatUpdatedAge(updatedAt, now)}" : "Calculation time unavailable";
 
     private string ForecastFreshnessState(DateTimeOffset now) =>
         _resetForecast.Probability24Hours is null && _resetForecast.Probability48Hours is null ? "Unavailable"
@@ -341,7 +355,7 @@ public sealed partial class UsagePopupForm
         _ => "Signal: unavailable"
     };
 
-    private static LinkLabel CreateProviderLink(Color accent, string? signalUrl = null)
+    private static LinkLabel CreateProviderLink(Color accent, string? signalUrl = null, bool websiteForecast = false)
     {
         var font = new Font("Segoe UI", 8.5f, FontStyle.Regular);
         var link = new LinkLabel
@@ -358,6 +372,11 @@ public sealed partial class UsagePopupForm
             AccessibleDescription = "Open the codex-reset.com community prediction source"
         };
         link.Links.Add(0, link.Text.Length, "https://codex-reset.com/");
+        if (websiteForecast)
+        {
+            link.Text += " · Tibo UI";
+            link.Links.Add(link.Text.Length - "Tibo UI".Length, "Tibo UI".Length, "https://tiboreset.com/forecast");
+        }
         if (signalUrl is not null)
         {
             link.Text += " · View post";
